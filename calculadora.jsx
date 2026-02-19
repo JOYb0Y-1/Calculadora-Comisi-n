@@ -1,16 +1,13 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 
-/* ══════════════════════════════════════════════════════════════
-   DATA — Commission tables from AFP Integra Esquema Elite
-   ══════════════════════════════════════════════════════════════ */
 const CUMPL_BRACKETS = [
   { min: 0, max: 49.99, label: "0%", col: 0 },
   { min: 50, max: 70.99, label: "50%", col: 1 },
   { min: 71, max: 80.99, label: "71%", col: 2 },
   { min: 81, max: 90.99, label: "81%", col: 3 },
-  { min: 91, max: 104.99, label: "91%", col: 4 },
-  { min: 105, max: 114.99, label: "105%", col: 5 },
-  { min: 115, max: Infinity, label: "115%", col: 6 },
+  { min: 91, max: 109.99, label: "91%", col: 4 },
+  { min: 110, max: 119.99, label: "110%", col: 5 },
+  { min: 120, max: Infinity, label: "120%", col: 6 },
 ];
 
 const MARKETS = [
@@ -20,26 +17,24 @@ const MARKETS = [
   { key: "md1", label: "MD 1", riaMin: 25000 },
 ];
 
-// FLUJO rates [market][cumpl_col]
 const FLUJO_RATES = [
-  [0, 0.02, 0.035, 0.04, 0.06, 0.065, 0.07],    // MD 3A
-  [0, 0.025, 0.04, 0.05, 0.07, 0.075, 0.08],     // MD 2A
-  [0, 0.025, 0.04, 0.05, 0.07, 0.08, 0.085],     // MD 2
-  [0, 0.03, 0.05, 0.06, 0.08, 0.09, 0.095],      // MD 1
+  [0, 0.02, 0.035, 0.04, 0.06, 0.065, 0.07],
+  [0, 0.025, 0.04, 0.05, 0.07, 0.075, 0.08],
+  [0, 0.025, 0.04, 0.05, 0.07, 0.08, 0.085],
+  [0, 0.03, 0.05, 0.06, 0.08, 0.09, 0.095],
 ];
 
-// SALDO (Mixta) rates [market][cumpl_col]
 const SALDO_RATES = [
-  [0, 0.01, 0.01, 0.02, 0.03, 0.03, 0.035],      // MD 3A
-  [0, 0.01, 0.015, 0.025, 0.035, 0.04, 0.04],     // MD 2A
-  [0, 0.01, 0.015, 0.025, 0.035, 0.04, 0.0425],   // MD 2
-  [0, 0.015, 0.025, 0.03, 0.04, 0.045, 0.05],     // MD 1
+  [0, 0.01, 0.01, 0.02, 0.03, 0.03, 0.035],
+  [0, 0.01, 0.015, 0.025, 0.035, 0.04, 0.04],
+  [0, 0.01, 0.015, 0.025, 0.035, 0.04, 0.0425],
+  [0, 0.015, 0.025, 0.03, 0.04, 0.045, 0.05],
 ];
 
 const BONUS_FLUJO_MIN = 70000;
 const BONUS_AMOUNT = 1000;
+const COL_LABELS = ["0%", "50%", "71%", "81%", "91%", "110%", "120%"];
 
-/* ══════════════════════════════════════════════════════════════ */
 function Icon({ name, size = 20, color = "currentColor", style = {} }) {
   return <span className="material-icons-outlined" style={{ fontSize: size, color, verticalAlign: "middle", lineHeight: 1, ...style }}>{name}</span>;
 }
@@ -47,65 +42,136 @@ function Icon({ name, size = 20, color = "currentColor", style = {} }) {
 function fmt(n) {
   return n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
 function fmtPct(n) {
   return (n * 100).toFixed(2) + "%";
 }
-
 function getCumplBracket(pct) {
-  for (const b of CUMPL_BRACKETS) {
-    if (pct >= b.min && pct <= b.max) return b;
-  }
+  for (const b of CUMPL_BRACKETS) { if (pct >= b.min && pct <= b.max) return b; }
   return CUMPL_BRACKETS[CUMPL_BRACKETS.length - 1];
 }
 
-/* ══════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-   ══════════════════════════════════════════════════════════════ */
+function DonutChart({ flujoTotal, saldoTotal }) {
+  const canvasRef = useRef(null);
+  const total = flujoTotal + saldoTotal;
+  const flujoPct = total > 0 ? flujoTotal / total : 0;
+  const saldoPct = total > 0 ? saldoTotal / total : 0;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const size = 200;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = size + "px";
+    canvas.style.height = size + "px";
+    ctx.scale(dpr, dpr);
+
+    const cx = size / 2, cy = size / 2, r = 80, lw = 28;
+    ctx.clearRect(0, 0, size, size);
+
+    if (total === 0) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = "#E2E8F0";
+      ctx.lineWidth = lw;
+      ctx.stroke();
+      ctx.fillStyle = "#94A3B8";
+      ctx.font = "700 14px 'Plus Jakarta Sans', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Sin datos", cx, cy);
+      return;
+    }
+
+    const drawArc = (start, end, color) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, start - Math.PI / 2, end - Math.PI / 2);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lw;
+      ctx.lineCap = "butt";
+      ctx.stroke();
+    };
+
+    const flujoAngle = flujoPct * Math.PI * 2;
+    const gap = total > 0 && flujoPct > 0 && flujoPct < 1 ? 0.04 : 0;
+
+    if (flujoPct > 0) drawArc(gap, flujoAngle - gap, "#D97706");
+    if (saldoPct > 0) drawArc(flujoAngle + gap, Math.PI * 2 - gap, "#2563EB");
+
+    // Center text
+    ctx.fillStyle = "#0F172A";
+    ctx.font = "800 22px 'JetBrains Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`S/ ${(total / 1000).toFixed(0)}K`, cx, cy - 6);
+    ctx.fillStyle = "#94A3B8";
+    ctx.font = "600 11px 'Plus Jakarta Sans', sans-serif";
+    ctx.fillText("RIA TOTAL", cx, cy + 14);
+  }, [flujoTotal, saldoTotal, total, flujoPct, saldoPct]);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+      <canvas ref={canvasRef} style={{ flexShrink: 0 }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {[
+          { label: "Flujo", value: flujoTotal, pct: flujoPct, color: "#D97706", bg: "#FFFBEB" },
+          { label: "Saldo", value: saldoTotal, pct: saldoPct, color: "#2563EB", bg: "#EFF6FF" },
+        ].map(item => (
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 14, height: 14, borderRadius: 4, background: item.color, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#0F172A" }}>{item.label}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: item.color, fontFamily: "'JetBrains Mono', monospace" }}>
+                {total > 0 ? `${(item.pct * 100).toFixed(1)}%` : "0%"}
+              </div>
+              <div style={{ fontSize: 12, color: "#64748B", fontFamily: "'JetBrains Mono', monospace" }}>
+                S/ {fmt(item.value)}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 export default function AFPCalculator() {
   const [meta, setMeta] = useState(130000);
-
-  // RIA inputs: { md3a: "", md2a: "", md2: "", md1: "" } for each type
   const [flujoRIA, setFlujoRIA] = useState({ md3a: "", md2a: "", md2: "", md1: "" });
   const [saldoRIA, setSaldoRIA] = useState({ md3a: "", md2a: "", md2: "", md1: "" });
 
   const calc = useMemo(() => {
     const fVals = MARKETS.map(m => Number(flujoRIA[m.key]) || 0);
     const sVals = MARKETS.map(m => Number(saldoRIA[m.key]) || 0);
-
     const totalFlujo = fVals.reduce((a, b) => a + b, 0);
     const totalSaldo = sVals.reduce((a, b) => a + b, 0);
     const totalRIA = totalFlujo + totalSaldo;
-
     const cumplPct = meta > 0 ? (totalRIA / meta) * 100 : 0;
     const bracket = getCumplBracket(cumplPct);
     const col = bracket.col;
-
     const flujoComms = fVals.map((ria, i) => ria * FLUJO_RATES[i][col]);
     const saldoComms = sVals.map((ria, i) => ria * SALDO_RATES[i][col]);
-
     const totalFlujoComm = flujoComms.reduce((a, b) => a + b, 0);
     const totalSaldoComm = saldoComms.reduce((a, b) => a + b, 0);
     const subtotal = totalFlujoComm + totalSaldoComm;
-
-    const bonusApplied = cumplPct >= 91 && totalFlujo >= BONUS_FLUJO_MIN;
+    const metaCumplida = cumplPct >= 91;
+    const bonusApplied = metaCumplida && totalFlujo >= BONUS_FLUJO_MIN;
     const grandTotal = subtotal + (bonusApplied ? BONUS_AMOUNT : 0);
-
     return {
-      fVals, sVals, totalFlujo, totalSaldo, totalRIA,
-      cumplPct, bracket, col,
+      fVals, sVals, totalFlujo, totalSaldo, totalRIA, cumplPct, bracket, col,
       flujoComms, saldoComms,
       flujoRates: fVals.map((_, i) => FLUJO_RATES[i][col]),
       saldoRates: sVals.map((_, i) => SALDO_RATES[i][col]),
-      totalFlujoComm, totalSaldoComm, subtotal,
-      bonusApplied, grandTotal,
+      totalFlujoComm, totalSaldoComm, subtotal, metaCumplida, bonusApplied, grandTotal,
     };
   }, [meta, flujoRIA, saldoRIA]);
 
   const updateFlujo = (key, val) => setFlujoRIA(p => ({ ...p, [key]: val }));
   const updateSaldo = (key, val) => setSaldoRIA(p => ({ ...p, [key]: val }));
 
-  /* ── Cumplimiento color ── */
   const cumplColor = calc.cumplPct >= 91 ? "#16A34A" : calc.cumplPct >= 71 ? "#D97706" : calc.cumplPct >= 50 ? "#EA580C" : "#DC2626";
   const cumplBg = calc.cumplPct >= 91 ? "#F0FDF4" : calc.cumplPct >= 71 ? "#FFFBEB" : calc.cumplPct >= 50 ? "#FFF7ED" : "#FEF2F2";
 
@@ -130,48 +196,38 @@ export default function AFPCalculator() {
       transition: border-color .2s, box-shadow .2s; text-align: right; }
     .ria-input:focus { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
     .ria-input::placeholder { color: #CBD5E1; font-weight: 500; }
-    .ref-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .ref-table th { padding: 10px 8px; font-size: 11px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: .08em; color: #fff; background: #1E293B; text-align: center; }
-    .ref-table th:first-child, .ref-table th:nth-child(2) { background: #0F172A; }
-    .ref-table td { padding: 9px 8px; text-align: center; font-weight: 600; border-bottom: 1px solid #F1F5F9;
-      font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #334155; }
-    .ref-table td:first-child { font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 700; color: #0F172A; text-align: left; padding-left: 14px; }
-    .ref-table td:nth-child(2) { color: #64748B; }
-    .ref-table .hl { background: #FFFBEB; color: #B45309; font-weight: 800; }
-    .ref-table tbody tr:hover { background: #F8FAFC; }
   `;
 
-  /* ── Reference Table Component ── */
   function RefTable({ title, icon, rates, color }) {
-    const cols = ["0%", "50%", "71%", "81%", "91%", "105%", "115%"];
     return (
-      <div style={{ marginBottom: 20 }}>
+      <div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <Icon name={icon} size={20} color={color} />
           <span style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>{title}</span>
         </div>
-        <div style={{ overflowX: "auto", borderRadius: 10, border: "1px solid #E2E8F0" }}>
-          <table className="ref-table">
+        <div style={{ borderRadius: 10, border: "1px solid #E2E8F0", overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", paddingLeft: 14, minWidth: 80 }}>Mercado</th>
-                <th style={{ minWidth: 70 }}>RIA Mín.</th>
-                {cols.map((c, i) => (
-                  <th key={c} style={{ minWidth: 60, background: calc.col === i ? "#D97706" : undefined }}>
-                    {c}
-                  </th>
+                <th style={{ padding: "10px 6px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#fff", background: "#0F172A", textAlign: "left", paddingLeft: 12, width: "14%" }}>Mercado</th>
+                <th style={{ padding: "10px 4px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".07em", color: "#fff", background: "#0F172A", textAlign: "center", width: "12%" }}>RIA Mín.</th>
+                {COL_LABELS.map((c, i) => (
+                  <th key={c} style={{ padding: "10px 2px", fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "#fff", background: calc.col === i ? "#D97706" : "#1E293B", textAlign: "center", transition: "background .3s" }}>{c}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {MARKETS.map((m, mi) => (
-                <tr key={m.key}>
-                  <td>{m.label}</td>
-                  <td>S/ {m.riaMin.toLocaleString()}</td>
+                <tr key={m.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                  <td style={{ padding: "10px 6px 10px 12px", fontWeight: 700, fontSize: 13, color: "#0F172A" }}>{m.label}</td>
+                  <td style={{ padding: "10px 4px", textAlign: "center", color: "#64748B", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>S/ {m.riaMin.toLocaleString()}</td>
                   {rates[mi].map((r, ci) => (
-                    <td key={ci} className={calc.col === ci ? "hl" : ""}>
-                      {(r * 100).toFixed(ci === 0 ? 0 : r % 0.005 === 0 ? 1 : 2)}%
+                    <td key={ci} style={{
+                      padding: "10px 2px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600, color: "#334155",
+                      background: calc.col === ci ? "#FFFBEB" : "transparent",
+                      ...(calc.col === ci ? { fontWeight: 800, color: "#B45309" } : {})
+                    }}>
+                      {(r * 100).toFixed(r === 0 ? 0 : (r * 100) % 1 === 0 ? 1 : 2)}%
                     </td>
                   ))}
                 </tr>
@@ -187,78 +243,68 @@ export default function AFPCalculator() {
     <div style={{ minHeight: "100vh", background: "#F1F5F9", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
       <style>{css}</style>
 
-      {/* ══ HEADER ══ */}
       <header style={{ background: "#0F172A", color: "#fff", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", top: 0, right: 0, width: "50%", height: "100%", background: "linear-gradient(135deg, transparent 40%, rgba(59,130,246,0.06) 40%)" }} />
-        <div style={{ position: "relative", maxWidth: 1100, margin: "0 auto", padding: "26px 32px 22px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <div style={{ width: 48, height: 48, background: "linear-gradient(135deg, #3B82F6, #1D4ED8)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Icon name="analytics" size={26} color="#fff" />
+        <div style={{ position: "relative", maxWidth: 1080, margin: "0 auto", padding: "24px 28px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 44, height: 44, background: "linear-gradient(135deg, #3B82F6, #1D4ED8)", borderRadius: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon name="analytics" size={24} color="#fff" />
               </div>
               <div>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.2em", color: "#64748B", textTransform: "uppercase" }}>AFP Integra — Esquema Elite</div>
-                <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: "-0.02em" }}>Calculadora de Comisiones</div>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.2em", color: "#64748B", textTransform: "uppercase" }}>AFP Integra — Esquema Elite</div>
+                <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: "-0.02em" }}>Calculadora de Comisiones</div>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 18px", background: "rgba(255,255,255,0.06)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)" }}>
-              <Icon name="verified_user" size={18} color="#3B82F6" />
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8" }}>Uso exclusivo gerencia</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 16px", background: "rgba(255,255,255,0.06)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)" }}>
+              <Icon name="support_agent" size={17} color="#3B82F6" />
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8" }}>Portal del Asesor</span>
             </div>
           </div>
         </div>
       </header>
 
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 20px 56px" }}>
+      <main style={{ maxWidth: 1080, margin: "0 auto", padding: "24px 16px 48px" }}>
 
-        {/* ══ REFERENCE TABLES ══ */}
-        <div className="fu" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: "24px 28px", marginBottom: 24, boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-            <Icon name="menu_book" size={24} color="#0F172A" />
-            <h2 style={{ fontSize: 17, fontWeight: 800, color: "#0F172A", margin: 0 }}>Tabla de Comisiones — Referencia</h2>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#94A3B8", marginLeft: "auto" }}>Esquema Elite</span>
+        <div className="fu" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: "22px 24px", marginBottom: 20, boxShadow: "0 1px 3px rgba(15,23,42,0.04)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+            <Icon name="menu_book" size={22} color="#0F172A" />
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: 0 }}>Tabla de Comisiones — Referencia</h2>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#94A3B8", marginLeft: "auto" }}>Esquema Elite</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
             <RefTable title="Comisión Flujo" icon="trending_up" rates={FLUJO_RATES} color="#D97706" />
             <RefTable title="Comisión Saldo (Mixta)" icon="savings" rates={SALDO_RATES} color="#2563EB" />
           </div>
         </div>
 
-        {/* ══ META / OBJETIVO ══ */}
-        <div className="fu2" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: "24px 28px", marginBottom: 24, boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28, alignItems: "end" }}>
-            {/* Meta input */}
+        <div className="fu2" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: "22px 24px", marginBottom: 20, boxShadow: "0 1px 3px rgba(15,23,42,0.04)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, alignItems: "end" }}>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.1em", display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <Icon name="flag" size={16} color="#94A3B8" /> Objetivo / Meta del asesor
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.1em", display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                <Icon name="flag" size={15} color="#94A3B8" /> Objetivo / Meta del asesor
               </label>
               <div style={{ position: "relative" }}>
-                <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 16, fontWeight: 700, color: "#94A3B8", fontFamily: "'JetBrains Mono', monospace" }}>S/</span>
+                <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", fontSize: 15, fontWeight: 700, color: "#94A3B8", fontFamily: "'JetBrains Mono', monospace" }}>S/</span>
                 <input type="number" value={meta} onChange={e => setMeta(Math.max(0, Number(e.target.value)))}
-                  style={{ width: "100%", padding: "16px 16px 16px 52px", fontSize: 30, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", border: "2px solid #E2E8F0", borderRadius: 12, outline: "none", color: "#0F172A", background: "#F8FAFC", transition: "border-color .2s, box-shadow .2s" }}
-                  onFocus={e => { e.target.style.borderColor = "#3B82F6"; e.target.style.boxShadow = "0 0 0 4px rgba(59,130,246,.1)"; }}
+                  style={{ width: "100%", padding: "14px 14px 14px 48px", fontSize: 28, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", border: "2px solid #E2E8F0", borderRadius: 10, outline: "none", color: "#0F172A", background: "#F8FAFC", transition: "border-color .2s, box-shadow .2s" }}
+                  onFocus={e => { e.target.style.borderColor = "#3B82F6"; e.target.style.boxShadow = "0 0 0 3px rgba(59,130,246,.1)"; }}
                   onBlur={e => { e.target.style.borderColor = "#E2E8F0"; e.target.style.boxShadow = "none"; }}
                 />
               </div>
             </div>
-
-            {/* Cumplimiento display */}
-            <div style={{ background: cumplBg, borderRadius: 12, padding: "18px 24px", border: `1px solid ${cumplColor}30` }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="speed" size={16} color="#64748B" /> % Cumplimiento
+            <div style={{ background: cumplBg, borderRadius: 10, padding: "16px 20px", border: `1px solid ${cumplColor}30` }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                <Icon name="speed" size={15} color="#64748B" /> % Cumplimiento
               </div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 10 }}>
-                <span style={{ fontSize: 36, fontWeight: 900, color: cumplColor, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>
-                  {calc.cumplPct.toFixed(1)}%
-                </span>
-                <span style={{ fontSize: 14, fontWeight: 700, color: cumplColor, background: `${cumplColor}18`, padding: "4px 12px", borderRadius: 6 }}>
-                  Columna {calc.bracket.label}
-                </span>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 32, fontWeight: 900, color: cumplColor, fontFamily: "'JetBrains Mono', monospace", lineHeight: 1 }}>{calc.cumplPct.toFixed(1)}%</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: cumplColor, background: `${cumplColor}18`, padding: "3px 10px", borderRadius: 5 }}>Columna {calc.bracket.label}</span>
               </div>
-              <div style={{ height: 8, background: `${cumplColor}20`, borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${Math.min(calc.cumplPct, 120) / 1.2}%`, background: `linear-gradient(90deg, ${cumplColor}, ${cumplColor}CC)`, borderRadius: 4, transition: "width .5s ease" }} />
+              <div style={{ height: 7, background: `${cumplColor}20`, borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(calc.cumplPct, 130) / 1.3}%`, background: `linear-gradient(90deg, ${cumplColor}, ${cumplColor}CC)`, borderRadius: 4, transition: "width .5s ease" }} />
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, fontWeight: 600, color: "#94A3B8" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5, fontSize: 10, fontWeight: 600, color: "#94A3B8" }}>
                 <span>RIA Total: S/ {fmt(calc.totalRIA)}</span>
                 <span>Meta: S/ {fmt(meta)}</span>
               </div>
@@ -266,183 +312,174 @@ export default function AFPCalculator() {
           </div>
         </div>
 
-        {/* ══ PREDICTION TABLE ══ */}
-        <div className="fu3" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", overflow: "hidden", marginBottom: 24, boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
-          <div style={{ padding: "20px 28px", borderBottom: "1px solid #F1F5F9", display: "flex", alignItems: "center", gap: 10 }}>
-            <Icon name="calculate" size={24} color="#0F172A" />
-            <h2 style={{ fontSize: 17, fontWeight: 800, color: "#0F172A", margin: 0 }}>Simulación de Comisiones</h2>
-            <span style={{ fontSize: 12, color: "#94A3B8", fontWeight: 500, marginLeft: 8 }}>Ingrese la RIA por mercado</span>
+        <div className="fu3" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", overflow: "hidden", marginBottom: 20, boxShadow: "0 1px 3px rgba(15,23,42,0.04)" }}>
+          <div style={{ padding: "18px 24px", borderBottom: "1px solid #F1F5F9", display: "flex", alignItems: "center", gap: 10 }}>
+            <Icon name="calculate" size={22} color="#0F172A" />
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: "#0F172A", margin: 0 }}>Simulación de Comisiones</h2>
+            <span style={{ fontSize: 12, color: "#94A3B8", fontWeight: 500, marginLeft: 6 }}>Ingrese la RIA por mercado</span>
           </div>
 
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
-              <thead>
-                {/* Top header row */}
-                <tr>
-                  <th rowSpan={2} style={{ padding: "14px 16px", background: "#0F172A", color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "left", width: 120, borderRight: "2px solid #1E293B" }}>
-                    Mercado
-                  </th>
-                  <th colSpan={3} style={{ padding: "12px 16px", background: "#92400E", color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center", borderRight: "3px solid #0F172A" }}>
-                    <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                      <Icon name="trending_up" size={16} color="#FDE68A" /> Flujo
-                    </span>
-                  </th>
-                  <th colSpan={3} style={{ padding: "12px 16px", background: "#1E3A5F", color: "#fff", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>
-                    <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                      <Icon name="savings" size={16} color="#93C5FD" /> Saldo
-                    </span>
-                  </th>
-                </tr>
-                {/* Sub header row */}
-                <tr style={{ background: "#F8FAFC" }}>
-                  <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", width: 180 }}>RIA (S/)</th>
-                  <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", width: 80 }}>Tasa</th>
-                  <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", borderRight: "3px solid #E2E8F0", width: 150 }}>Comisión</th>
-                  <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#1E3A5F", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", width: 180 }}>RIA (S/)</th>
-                  <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#1E3A5F", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", width: 80 }}>Tasa</th>
-                  <th style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: "#1E3A5F", textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", width: 150 }}>Comisión</th>
-                </tr>
-              </thead>
-              <tbody>
-                {MARKETS.map((m, i) => (
-                  <tr key={m.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
-                    {/* Market name */}
-                    <td style={{ padding: "12px 16px", fontWeight: 700, fontSize: 15, color: "#0F172A", background: "#F8FAFC", borderRight: "2px solid #F1F5F9" }}>
-                      <div>{m.label}</div>
-                      <div style={{ fontSize: 11, fontWeight: 500, color: "#94A3B8" }}>RIA mín. S/ {m.riaMin.toLocaleString()}</div>
-                    </td>
-
-                    {/* Flujo RIA input */}
-                    <td style={{ padding: "10px 12px" }}>
-                      <input type="number" className="ria-input" placeholder="0"
-                        value={flujoRIA[m.key]} onChange={e => updateFlujo(m.key, e.target.value)} />
-                    </td>
-                    {/* Flujo Rate */}
-                    <td style={{ padding: "10px 8px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: calc.fVals[i] > 0 ? "#92400E" : "#CBD5E1" }}>
-                      {calc.fVals[i] > 0 ? fmtPct(calc.flujoRates[i]) : "—"}
-                    </td>
-                    {/* Flujo Commission */}
-                    <td style={{ padding: "10px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 800, color: calc.flujoComms[i] > 0 ? "#92400E" : "#E2E8F0", borderRight: "3px solid #F1F5F9" }}>
-                      {calc.flujoComms[i] > 0 ? `S/ ${fmt(calc.flujoComms[i])}` : "—"}
-                    </td>
-
-                    {/* Saldo RIA input */}
-                    <td style={{ padding: "10px 12px" }}>
-                      <input type="number" className="ria-input" placeholder="0"
-                        value={saldoRIA[m.key]} onChange={e => updateSaldo(m.key, e.target.value)} />
-                    </td>
-                    {/* Saldo Rate */}
-                    <td style={{ padding: "10px 8px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: calc.sVals[i] > 0 ? "#1E3A5F" : "#CBD5E1" }}>
-                      {calc.sVals[i] > 0 ? fmtPct(calc.saldoRates[i]) : "—"}
-                    </td>
-                    {/* Saldo Commission */}
-                    <td style={{ padding: "10px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 800, color: calc.saldoComms[i] > 0 ? "#1E3A5F" : "#E2E8F0" }}>
-                      {calc.saldoComms[i] > 0 ? `S/ ${fmt(calc.saldoComms[i])}` : "—"}
-                    </td>
-                  </tr>
+          <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: "13%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "14%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "14%" }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th rowSpan={2} style={{ padding: "12px 14px", background: "#0F172A", color: "#fff", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "left", borderRight: "2px solid #1E293B" }}>Mercado</th>
+                <th colSpan={3} style={{ padding: "10px 12px", background: "#92400E", color: "#fff", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center", borderRight: "3px solid #0F172A" }}>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="trending_up" size={15} color="#FDE68A" /> Flujo</span>
+                </th>
+                <th colSpan={3} style={{ padding: "10px 12px", background: "#1E3A5F", color: "#fff", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center" }}>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}><Icon name="savings" size={15} color="#93C5FD" /> Saldo</span>
+                </th>
+              </tr>
+              <tr style={{ background: "#F8FAFC" }}>
+                {["RIA (S/)", "Tasa", "Comisión"].map((h, hi) => (
+                  <th key={`f${hi}`} style={{ padding: "8px 6px", fontSize: 10, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: ".06em", textAlign: "center", ...(hi === 2 ? { borderRight: "3px solid #E2E8F0" } : {}) }}>{h}</th>
                 ))}
-              </tbody>
-
-              {/* ── Totals ── */}
-              <tfoot>
-                <tr style={{ background: "#F8FAFC", borderTop: "2px solid #E2E8F0" }}>
-                  <td style={{ padding: "14px 16px", fontWeight: 800, fontSize: 14, color: "#0F172A", borderRight: "2px solid #E2E8F0" }}>
-                    <Icon name="functions" size={18} color="#64748B" style={{ marginRight: 6 }} /> SUBTOTALES
+                {["RIA (S/)", "Tasa", "Comisión"].map((h, hi) => (
+                  <th key={`s${hi}`} style={{ padding: "8px 6px", fontSize: 10, fontWeight: 700, color: "#1E3A5F", textTransform: "uppercase", letterSpacing: ".06em", textAlign: "center" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MARKETS.map((m, i) => (
+                <tr key={m.key} style={{ borderBottom: "1px solid #F1F5F9" }}>
+                  <td style={{ padding: "10px 14px", fontWeight: 700, fontSize: 14, color: "#0F172A", background: "#F8FAFC", borderRight: "2px solid #F1F5F9" }}>
+                    <div>{m.label}</div>
+                    <div style={{ fontSize: 10, fontWeight: 500, color: "#94A3B8" }}>RIA mín. S/ {m.riaMin.toLocaleString()}</div>
                   </td>
-                  <td style={{ padding: "14px 12px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: "#0F172A" }}>
-                    S/ {fmt(calc.totalFlujo)}
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" className="ria-input" placeholder="0" value={flujoRIA[m.key]} onChange={e => updateFlujo(m.key, e.target.value)} />
                   </td>
-                  <td style={{ padding: "14px 8px" }} />
-                  <td style={{ padding: "14px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 800, color: "#92400E", borderRight: "3px solid #E2E8F0" }}>
-                    S/ {fmt(calc.totalFlujoComm)}
+                  <td style={{ padding: "8px 4px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: calc.fVals[i] > 0 ? "#92400E" : "#CBD5E1" }}>
+                    {calc.fVals[i] > 0 ? fmtPct(calc.flujoRates[i]) : "—"}
                   </td>
-                  <td style={{ padding: "14px 12px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: "#0F172A" }}>
-                    S/ {fmt(calc.totalSaldo)}
+                  <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 800, color: calc.flujoComms[i] > 0 ? "#92400E" : "#E2E8F0", borderRight: "3px solid #F1F5F9" }}>
+                    {calc.flujoComms[i] > 0 ? `S/ ${fmt(calc.flujoComms[i])}` : "—"}
                   </td>
-                  <td style={{ padding: "14px 8px" }} />
-                  <td style={{ padding: "14px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 800, color: "#1E3A5F" }}>
-                    S/ {fmt(calc.totalSaldoComm)}
+                  <td style={{ padding: "8px 8px" }}>
+                    <input type="number" className="ria-input" placeholder="0" value={saldoRIA[m.key]} onChange={e => updateSaldo(m.key, e.target.value)} />
                   </td>
-                </tr>
-
-                {/* Grand total row */}
-                <tr style={{ background: "#0F172A" }}>
-                  <td colSpan={4} style={{ padding: "16px 16px", borderRight: "3px solid #1E293B" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-                        <Icon name="account_balance_wallet" size={20} color="#FDE68A" /> RIA TOTAL
-                      </span>
-                      <span style={{ fontSize: 22, fontWeight: 900, color: "#FDE68A", fontFamily: "'JetBrains Mono', monospace" }}>
-                        S/ {fmt(calc.totalRIA)}
-                      </span>
-                    </div>
+                  <td style={{ padding: "8px 4px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: calc.sVals[i] > 0 ? "#1E3A5F" : "#CBD5E1" }}>
+                    {calc.sVals[i] > 0 ? fmtPct(calc.saldoRates[i]) : "—"}
                   </td>
-                  <td colSpan={3} style={{ padding: "16px 16px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-                        <Icon name="payments" size={20} color="#93C5FD" /> COMISIÓN TOTAL
-                      </span>
-                      <span style={{ fontSize: 22, fontWeight: 900, color: "#93C5FD", fontFamily: "'JetBrains Mono', monospace" }}>
-                        S/ {fmt(calc.subtotal)}
-                      </span>
-                    </div>
+                  <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 800, color: calc.saldoComms[i] > 0 ? "#1E3A5F" : "#E2E8F0" }}>
+                    {calc.saldoComms[i] > 0 ? `S/ ${fmt(calc.saldoComms[i])}` : "—"}
                   </td>
                 </tr>
-              </tfoot>
-            </table>
-          </div>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: "#F8FAFC", borderTop: "2px solid #E2E8F0" }}>
+                <td style={{ padding: "12px 14px", fontWeight: 800, fontSize: 13, color: "#0F172A", borderRight: "2px solid #E2E8F0" }}>
+                  <Icon name="functions" size={16} color="#64748B" style={{ marginRight: 4 }} /> SUBTOTALES
+                </td>
+                <td style={{ padding: "12px 8px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: "#0F172A" }}>S/ {fmt(calc.totalFlujo)}</td>
+                <td />
+                <td style={{ padding: "12px 10px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 800, color: "#92400E", borderRight: "3px solid #E2E8F0" }}>S/ {fmt(calc.totalFlujoComm)}</td>
+                <td style={{ padding: "12px 8px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: "#0F172A" }}>S/ {fmt(calc.totalSaldo)}</td>
+                <td />
+                <td style={{ padding: "12px 10px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 800, color: "#1E3A5F" }}>S/ {fmt(calc.totalSaldoComm)}</td>
+              </tr>
+              <tr style={{ background: "#0F172A" }}>
+                <td colSpan={4} style={{ padding: "14px 14px", borderRight: "3px solid #1E293B" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 6 }}><Icon name="account_balance_wallet" size={18} color="#FDE68A" /> RIA TOTAL</span>
+                    <span style={{ fontSize: 20, fontWeight: 900, color: "#FDE68A", fontFamily: "'JetBrains Mono', monospace" }}>S/ {fmt(calc.totalRIA)}</span>
+                  </div>
+                </td>
+                <td colSpan={3} style={{ padding: "14px 14px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 6 }}><Icon name="payments" size={18} color="#93C5FD" /> COMISIÓN TOTAL</span>
+                    <span style={{ fontSize: 20, fontWeight: 900, color: "#93C5FD", fontFamily: "'JetBrains Mono', monospace" }}>S/ {fmt(calc.subtotal)}</span>
+                  </div>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
 
-        {/* ══ BONUS + GRAND TOTAL ══ */}
-        <div className="fu3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-          {/* Bonus card */}
-          <div style={{ background: calc.bonusApplied ? "#F0FDF4" : "#fff", borderRadius: 14, border: `1px solid ${calc.bonusApplied ? "#BBF7D0" : "#E2E8F0"}`, padding: "22px 26px", boxShadow: "0 1px 4px rgba(15,23,42,0.05)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <Icon name="emoji_events" size={24} color={calc.bonusApplied ? "#16A34A" : "#CBD5E1"} />
-              <span style={{ fontSize: 15, fontWeight: 800, color: calc.bonusApplied ? "#166534" : "#94A3B8" }}>Bono por Flujo</span>
-            </div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: calc.bonusApplied ? "#16A34A" : "#CBD5E1", fontFamily: "'JetBrains Mono', monospace", marginBottom: 8 }}>
-              {calc.bonusApplied ? `+ S/ ${fmt(BONUS_AMOUNT)}` : "No aplica"}
-            </div>
-            <div style={{ fontSize: 12, color: "#64748B", lineHeight: 1.6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                <Icon name={calc.cumplPct >= 91 ? "check_circle" : "cancel"} size={14} color={calc.cumplPct >= 91 ? "#16A34A" : "#DC2626"} />
-                Cumplimiento de meta ≥ 91% ({calc.cumplPct.toFixed(1)}%)
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
+          {/* Left: Bonus + Donut stacked */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Bonus */}
+            <div style={{ background: calc.bonusApplied ? "#F0FDF4" : "#fff", borderRadius: 14, border: `1px solid ${calc.bonusApplied ? "#BBF7D0" : "#E2E8F0"}`, padding: "20px 22px", boxShadow: "0 1px 3px rgba(15,23,42,0.04)", flex: "0 0 auto" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <Icon name="emoji_events" size={22} color={calc.bonusApplied ? "#16A34A" : "#CBD5E1"} />
+                <span style={{ fontSize: 14, fontWeight: 800, color: calc.bonusApplied ? "#166534" : "#94A3B8" }}>Bono por Flujo</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name={calc.totalFlujo >= BONUS_FLUJO_MIN ? "check_circle" : "cancel"} size={14} color={calc.totalFlujo >= BONUS_FLUJO_MIN ? "#16A34A" : "#DC2626"} />
-                RIA Flujo acumulada ≥ S/ {BONUS_FLUJO_MIN.toLocaleString()} (S/ {fmt(calc.totalFlujo)})
+              <div style={{ fontSize: 26, fontWeight: 900, color: calc.bonusApplied ? "#16A34A" : "#CBD5E1", fontFamily: "'JetBrains Mono', monospace", marginBottom: 8 }}>
+                {calc.bonusApplied ? `+ S/ ${fmt(BONUS_AMOUNT)}` : "No aplica"}
               </div>
+              <div style={{ fontSize: 12, color: "#64748B", lineHeight: 1.7 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                  <Icon name={calc.metaCumplida ? "check_circle" : "cancel"} size={14} color={calc.metaCumplida ? "#16A34A" : "#DC2626"} />
+                  Meta completada ({calc.cumplPct.toFixed(1)}%)
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <Icon name={calc.totalFlujo >= BONUS_FLUJO_MIN ? "check_circle" : "cancel"} size={14} color={calc.totalFlujo >= BONUS_FLUJO_MIN ? "#16A34A" : "#DC2626"} />
+                  70% flujo acumulado ≥ S/ {BONUS_FLUJO_MIN.toLocaleString()} (S/ {fmt(calc.totalFlujo)})
+                </div>
+              </div>
+            </div>
+
+            {/* Donut Chart */}
+            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: "20px 22px", boxShadow: "0 1px 3px rgba(15,23,42,0.04)", flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+                <Icon name="donut_large" size={20} color="#0F172A" />
+                <span style={{ fontSize: 14, fontWeight: 800, color: "#0F172A" }}>Distribución RIA</span>
+              </div>
+              <DonutChart flujoTotal={calc.totalFlujo} saldoTotal={calc.totalSaldo} />
             </div>
           </div>
 
-          {/* Grand total card */}
-          <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)", borderRadius: 14, padding: "22px 26px", color: "#fff", boxShadow: "0 4px 20px rgba(15,23,42,0.2)", position: "relative", overflow: "hidden" }}>
+          <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)", borderRadius: 14, padding: "28px 28px", color: "#fff", boxShadow: "0 4px 20px rgba(15,23,42,0.2)", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <div style={{ position: "absolute", top: 0, right: 0, width: "50%", height: "100%", background: "linear-gradient(135deg, transparent 40%, rgba(59,130,246,0.08) 40%)" }} />
             <div style={{ position: "relative" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <Icon name="account_balance" size={24} color="#FDE68A" />
-                <span style={{ fontSize: 15, fontWeight: 800 }}>Comisión Total del Asesor</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <Icon name="account_balance" size={26} color="#FDE68A" />
+                <span style={{ fontSize: 16, fontWeight: 800 }}>Comisión Total del Asesor</span>
               </div>
-              <div style={{ fontSize: 42, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "-0.02em", marginBottom: 8, color: "#FDE68A" }}>
+              <div style={{ fontSize: 48, fontWeight: 900, fontFamily: "'JetBrains Mono', monospace", letterSpacing: "-0.02em", marginBottom: 16, color: "#FDE68A", lineHeight: 1 }}>
                 S/ {fmt(calc.grandTotal)}
               </div>
-              <div style={{ display: "flex", gap: 16, fontSize: 13, fontWeight: 600, color: "#94A3B8" }}>
-                <span>Flujo: S/ {fmt(calc.totalFlujoComm)}</span>
-                <span>Saldo: S/ {fmt(calc.totalSaldoComm)}</span>
-                {calc.bonusApplied && <span style={{ color: "#4ADE80" }}>Bono: S/ {fmt(BONUS_AMOUNT)}</span>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 14, fontWeight: 600 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "rgba(255,255,255,0.06)", borderRadius: 8 }}>
+                  <span style={{ color: "#94A3B8", display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon name="trending_up" size={16} color="#D97706" /> Flujo
+                  </span>
+                  <span style={{ color: "#FDE68A", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800 }}>S/ {fmt(calc.totalFlujoComm)}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "rgba(255,255,255,0.06)", borderRadius: 8 }}>
+                  <span style={{ color: "#94A3B8", display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon name="savings" size={16} color="#93C5FD" /> Saldo
+                  </span>
+                  <span style={{ color: "#93C5FD", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800 }}>S/ {fmt(calc.totalSaldoComm)}</span>
+                </div>
+                {calc.bonusApplied && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: "rgba(74,222,128,0.1)", borderRadius: 8 }}>
+                    <span style={{ color: "#94A3B8", display: "flex", alignItems: "center", gap: 6 }}>
+                      <Icon name="emoji_events" size={16} color="#4ADE80" /> Bono
+                    </span>
+                    <span style={{ color: "#4ADE80", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800 }}>S/ {fmt(BONUS_AMOUNT)}</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* ══ FOOTER NOTE ══ */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 22px", background: "#fff", borderRadius: 12, border: "1px solid #E2E8F0" }}>
-          <Icon name="info" size={20} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "14px 20px", background: "#fff", borderRadius: 10, border: "1px solid #E2E8F0" }}>
+          <Icon name="info" size={18} color="#94A3B8" style={{ marginTop: 2, flexShrink: 0 }} />
           <div style={{ fontSize: 12, color: "#64748B", lineHeight: 1.7 }}>
-            <strong style={{ color: "#0F172A" }}>Nota:</strong> La comisión se calcula según el % de cumplimiento de la meta (RIA total / Meta).
-            El bono de S/ {fmt(BONUS_AMOUNT)} requiere cumplimiento ≥ 91% y RIA flujo acumulada ≥ S/ {BONUS_FLUJO_MIN.toLocaleString()}.
-            La comisión mensual para traspasos Multi AFP se paga a partir del devengue de la RIA. Herramienta de uso interno — AFP Integra.
+            <strong style={{ color: "#0F172A" }}>Nota:</strong> La comisión se calcula según el % de cumplimiento de la meta (RIA total / Meta). El bono de S/ 1,000 soles requiere cumplimiento del 70% flujo y meta completada. La comisión mensual para traspasos se paga a partir del devengue de la RIA. Herramienta de uso interno — AFP Integra.
           </div>
         </div>
       </main>
