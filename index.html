@@ -17,9 +17,16 @@
     input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
     input[type=number]{-moz-appearance:textfield}button,input{font-family:inherit}
     @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-    .fu{animation:fadeUp .5s cubic-bezier(.4,0,.2,1) both}.fu2{animation:fadeUp .5s cubic-bezier(.4,0,.2,1) .1s both}.fu3{animation:fadeUp .5s cubic-bezier(.4,0,.2,1) .2s both}
+    .fu{animation:fadeUp .4s cubic-bezier(.4,0,.2,1) both}
     .ria-input{width:100%;padding:10px 12px;font-size:15px;font-weight:700;font-family:'JetBrains Mono',monospace;border:2px solid #E2E8F0;border-radius:8px;outline:none;color:#0F172A;background:#fff;transition:border-color .2s,box-shadow .2s;text-align:right}
     .ria-input:focus{border-color:#3B82F6;box-shadow:0 0 0 3px rgba(59,130,246,.12)}.ria-input::placeholder{color:#CBD5E1;font-weight:500}
+    .tab-btn{padding:12px 28px;font-size:14px;font-weight:700;border:none;border-radius:10px 10px 0 0;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px;letter-spacing:.02em}
+    .tab-btn.active{background:#fff;color:#0F172A;box-shadow:0 -2px 8px rgba(15,23,42,.06)}
+    .tab-btn:not(.active){background:#1E293B;color:#64748B}
+    .tab-btn:not(.active):hover{color:#94A3B8;background:#253347}
+    .refresh-btn{display:flex;align-items:center;gap:6px;padding:8px 16px;border:1.5px solid #E2E8F0;border-radius:8px;background:#fff;color:#64748B;font-size:12px;font-weight:700;cursor:pointer;transition:all .15s}
+    .refresh-btn:hover{border-color:#DC2626;color:#DC2626;background:#FEF2F2}
+    .card{background:#fff;border-radius:14px;border:1px solid #E2E8F0;box-shadow:0 1px 3px rgba(15,23,42,.04)}
   </style>
 </head>
 <body>
@@ -27,6 +34,14 @@
 <script type="text/babel">
 const{useState,useMemo,useRef,useEffect}=React;
 
+/* ═══════════════ SHARED ═══════════════ */
+function Icon({name,size=20,color="currentColor",style={}}){
+  return <span className="material-icons-outlined" style={{fontSize:size,color,verticalAlign:"middle",lineHeight:1,...style}}>{name}</span>;
+}
+function fmt(n){return n.toLocaleString("es-PE",{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fmtPct(n){return(n*100).toFixed(2)+"%"}
+
+/* ═══════════════ TRASPASOS DATA ═══════════════ */
 const CUMPL_BRACKETS=[
   {min:0,max:49.99,label:"0%",col:0},{min:50,max:70.99,label:"50%",col:1},
   {min:71,max:80.99,label:"71%",col:2},{min:81,max:90.99,label:"81%",col:3},
@@ -47,53 +62,66 @@ const SALDO_RATES=[
 ];
 const BONUS_FLUJO_MIN=70000,BONUS_AMOUNT=1000;
 const COL_LABELS=["0%","50%","71%","81%","91%","110%","120%"];
-
-function Icon({name,size=20,color="currentColor",style={}}){
-  return <span className="material-icons-outlined" style={{fontSize:size,color,verticalAlign:"middle",lineHeight:1,...style}}>{name}</span>;
-}
-function fmt(n){return n.toLocaleString("es-PE",{minimumFractionDigits:2,maximumFractionDigits:2})}
-function fmtPct(n){return(n*100).toFixed(2)+"%"}
 function getCumplBracket(pct){for(const b of CUMPL_BRACKETS){if(pct>=b.min&&pct<=b.max)return b}return CUMPL_BRACKETS[6]}
 
-function DonutChart({flujoTotal,saldoTotal}){
-  const canvasRef=useRef(null);
-  const total=flujoTotal+saldoTotal;
-  const flujoPct=total>0?flujoTotal/total:0;
-  const saldoPct=total>0?saldoTotal/total:0;
+/* ═══════════════ APV DATA ═══════════════ */
+const FUNDS=["F0","F1","F2","F3"];
+// Gestionados: [venta955_low, venta955_high, ventaNueva_low, ventaNueva_high]
+const APV_GESTIONADOS={
+  F0:[.0018,.0018,.0018,.0018],
+  F1:[.005,.006,.005,.006],
+  F2:[.008,.01,.0095,.011],
+  F3:[.008,.01,.0095,.011],
+};
+// Espontáneos: [venta955, ventaNueva]
+const APV_ESPONTANEOS={
+  F0:[.0018,.0018],
+  F1:[null,null],
+  F2:[.005,.006],
+  F3:[.005,.006],
+};
 
+function getAPVRate(fund,clientType,ventaType,amount){
+  if(clientType==="espontaneo"){
+    const rates=APV_ESPONTANEOS[fund];
+    const idx=ventaType==="955"?0:1;
+    return rates[idx];
+  }else{
+    const rates=APV_GESTIONADOS[fund];
+    const isHigh=amount>=600000;
+    if(ventaType==="955") return isHigh?rates[1]:rates[0];
+    return isHigh?rates[3]:rates[2];
+  }
+}
+
+/* ═══════════════ DONUT CHART ═══════════════ */
+function DonutChart({slices,centerTop,centerBottom}){
+  const canvasRef=useRef(null);
+  const total=slices.reduce((a,s)=>a+s.value,0);
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
-    const ctx=canvas.getContext("2d");
-    const dpr=window.devicePixelRatio||1;const size=200;
-    canvas.width=size*dpr;canvas.height=size*dpr;
-    canvas.style.width=size+"px";canvas.style.height=size+"px";
-    ctx.scale(dpr,dpr);
-    const cx=size/2,cy=size/2,r=80,lw=28;
-    ctx.clearRect(0,0,size,size);
-    if(total===0){
-      ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.strokeStyle="#E2E8F0";ctx.lineWidth=lw;ctx.stroke();
-      ctx.fillStyle="#94A3B8";ctx.font="700 14px 'Plus Jakarta Sans',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("Sin datos",cx,cy);return;
-    }
-    const drawArc=(start,end,color)=>{ctx.beginPath();ctx.arc(cx,cy,r,start-Math.PI/2,end-Math.PI/2);ctx.strokeStyle=color;ctx.lineWidth=lw;ctx.lineCap="butt";ctx.stroke()};
-    const flujoAngle=flujoPct*Math.PI*2;const gap=flujoPct>0&&flujoPct<1?.04:0;
-    if(flujoPct>0)drawArc(gap,flujoAngle-gap,"#D97706");
-    if(saldoPct>0)drawArc(flujoAngle+gap,Math.PI*2-gap,"#2563EB");
-    ctx.fillStyle="#0F172A";ctx.font="800 22px 'JetBrains Mono',monospace";ctx.textAlign="center";ctx.textBaseline="middle";
-    ctx.fillText(`S/ ${(total/1000).toFixed(0)}K`,cx,cy-6);
-    ctx.fillStyle="#94A3B8";ctx.font="600 11px 'Plus Jakarta Sans',sans-serif";ctx.fillText("RIA TOTAL",cx,cy+14);
-  },[flujoTotal,saldoTotal,total,flujoPct,saldoPct]);
-
+    const ctx=canvas.getContext("2d");const dpr=window.devicePixelRatio||1;const size=180;
+    canvas.width=size*dpr;canvas.height=size*dpr;canvas.style.width=size+"px";canvas.style.height=size+"px";ctx.scale(dpr,dpr);
+    const cx=size/2,cy=size/2,r=72,lw=26;ctx.clearRect(0,0,size,size);
+    if(total===0){ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.strokeStyle="#E2E8F0";ctx.lineWidth=lw;ctx.stroke();
+      ctx.fillStyle="#94A3B8";ctx.font="700 13px 'Plus Jakarta Sans',sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("Sin datos",cx,cy);return;}
+    let startAngle=0;
+    slices.forEach(s=>{if(s.value<=0)return;const angle=(s.value/total)*Math.PI*2;const gap=slices.filter(x=>x.value>0).length>1?.04:0;
+      ctx.beginPath();ctx.arc(cx,cy,r,startAngle-Math.PI/2+gap,startAngle+angle-Math.PI/2-gap);ctx.strokeStyle=s.color;ctx.lineWidth=lw;ctx.lineCap="butt";ctx.stroke();startAngle+=angle;});
+    ctx.fillStyle="#0F172A";ctx.font="800 18px 'JetBrains Mono',monospace";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(centerTop,cx,cy-6);
+    ctx.fillStyle="#94A3B8";ctx.font="600 10px 'Plus Jakarta Sans',sans-serif";ctx.fillText(centerBottom,cx,cy+12);
+  },[slices,total,centerTop,centerBottom]);
   return(
-    <div style={{display:"flex",alignItems:"center",gap:28}}>
+    <div style={{display:"flex",alignItems:"center",gap:24}}>
       <canvas ref={canvasRef} style={{flexShrink:0}}/>
-      <div style={{display:"flex",flexDirection:"column",gap:14}}>
-        {[{label:"Flujo",value:flujoTotal,pct:flujoPct,color:"#D97706"},{label:"Saldo",value:saldoTotal,pct:saldoPct,color:"#2563EB"}].map(item=>(
-          <div key={item.label} style={{display:"flex",alignItems:"center",gap:12}}>
-            <div style={{width:14,height:14,borderRadius:4,background:item.color,flexShrink:0}}/>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {slices.map(s=>(
+          <div key={s.label} style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:12,height:12,borderRadius:3,background:s.color,flexShrink:0}}/>
             <div>
-              <div style={{fontSize:13,fontWeight:700,color:"#0F172A"}}>{item.label}</div>
-              <div style={{fontSize:18,fontWeight:800,color:item.color,fontFamily:"'JetBrains Mono',monospace"}}>{total>0?`${(item.pct*100).toFixed(1)}%`:"0%"}</div>
-              <div style={{fontSize:12,color:"#64748B",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(item.value)}</div>
+              <div style={{fontSize:12,fontWeight:700,color:"#0F172A"}}>{s.label}</div>
+              <div style={{fontSize:16,fontWeight:800,color:s.color,fontFamily:"'JetBrains Mono',monospace"}}>{total>0?`${((s.value/total)*100).toFixed(1)}%`:"0%"}</div>
+              <div style={{fontSize:11,color:"#64748B",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(s.value)}</div>
             </div>
           </div>
         ))}
@@ -102,55 +130,21 @@ function DonutChart({flujoTotal,saldoTotal}){
   );
 }
 
-function RefTable({title,icon,rates,color,activeCol}){
-  return(
-    <div>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-        <Icon name={icon} size={20} color={color}/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>{title}</span>
-      </div>
-      <div style={{borderRadius:10,border:"1px solid #E2E8F0",overflow:"hidden"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
-          <thead><tr>
-            <th style={{padding:"10px 6px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:"#fff",background:"#0F172A",textAlign:"left",paddingLeft:12,width:"14%"}}>Mercado</th>
-            <th style={{padding:"10px 4px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:"#fff",background:"#0F172A",textAlign:"center",width:"12%"}}>RIA Mín.</th>
-            {COL_LABELS.map((c,i)=><th key={c} style={{padding:"10px 2px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".05em",color:"#fff",background:activeCol===i?"#D97706":"#1E293B",textAlign:"center",transition:"background .3s"}}>{c}</th>)}
-          </tr></thead>
-          <tbody>
-            {MARKETS.map((m,mi)=>(
-              <tr key={m.key} style={{borderBottom:"1px solid #F1F5F9"}}>
-                <td style={{padding:"10px 6px 10px 12px",fontWeight:700,fontSize:13,color:"#0F172A"}}>{m.label}</td>
-                <td style={{padding:"10px 4px",textAlign:"center",color:"#64748B",fontFamily:"'JetBrains Mono',monospace",fontSize:12}}>S/ {m.riaMin.toLocaleString()}</td>
-                {rates[mi].map((r,ci)=>(
-                  <td key={ci} style={{padding:"10px 2px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:12,fontWeight:600,color:"#334155",...(activeCol===ci?{background:"#FFFBEB",fontWeight:800,color:"#B45309"}:{})}}>
-                    {(r*100).toFixed(r===0?0:(r*100)%1===0?1:2)}%
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function App(){
+/* ═══════════════ TRASPASOS CALCULATOR ═══════════════ */
+function TraspasosCalc(){
   const[meta,setMeta]=useState(130000);
   const[flujoRIA,setFlujoRIA]=useState({md3a:"",md2a:"",md2:"",md1:""});
   const[saldoRIA,setSaldoRIA]=useState({md3a:"",md2a:"",md2:"",md1:""});
+  const clearAll=()=>{setFlujoRIA({md3a:"",md2a:"",md2:"",md1:""});setSaldoRIA({md3a:"",md2a:"",md2:"",md1:""})};
 
   const calc=useMemo(()=>{
-    const fVals=MARKETS.map(m=>Number(flujoRIA[m.key])||0);
-    const sVals=MARKETS.map(m=>Number(saldoRIA[m.key])||0);
-    const totalFlujo=fVals.reduce((a,b)=>a+b,0);const totalSaldo=sVals.reduce((a,b)=>a+b,0);
-    const totalRIA=totalFlujo+totalSaldo;const cumplPct=meta>0?(totalRIA/meta)*100:0;
-    const bracket=getCumplBracket(cumplPct);const col=bracket.col;
-    const flujoComms=fVals.map((ria,i)=>ria*FLUJO_RATES[i][col]);
-    const saldoComms=sVals.map((ria,i)=>ria*SALDO_RATES[i][col]);
+    const fVals=MARKETS.map(m=>Number(flujoRIA[m.key])||0);const sVals=MARKETS.map(m=>Number(saldoRIA[m.key])||0);
+    const totalFlujo=fVals.reduce((a,b)=>a+b,0);const totalSaldo=sVals.reduce((a,b)=>a+b,0);const totalRIA=totalFlujo+totalSaldo;
+    const cumplPct=meta>0?(totalRIA/meta)*100:0;const bracket=getCumplBracket(cumplPct);const col=bracket.col;
+    const flujoComms=fVals.map((ria,i)=>ria*FLUJO_RATES[i][col]);const saldoComms=sVals.map((ria,i)=>ria*SALDO_RATES[i][col]);
     const totalFlujoComm=flujoComms.reduce((a,b)=>a+b,0);const totalSaldoComm=saldoComms.reduce((a,b)=>a+b,0);
     const subtotal=totalFlujoComm+totalSaldoComm;const metaCumplida=cumplPct>=91;
-    const bonusApplied=metaCumplida&&totalFlujo>=BONUS_FLUJO_MIN;
-    const grandTotal=subtotal+(bonusApplied?BONUS_AMOUNT:0);
+    const bonusApplied=metaCumplida&&totalFlujo>=BONUS_FLUJO_MIN;const grandTotal=subtotal+(bonusApplied?BONUS_AMOUNT:0);
     return{fVals,sVals,totalFlujo,totalSaldo,totalRIA,cumplPct,bracket,col,flujoComms,saldoComms,
       flujoRates:fVals.map((_,i)=>FLUJO_RATES[i][col]),saldoRates:sVals.map((_,i)=>SALDO_RATES[i][col]),
       totalFlujoComm,totalSaldoComm,subtotal,metaCumplida,bonusApplied,grandTotal};
@@ -161,12 +155,404 @@ function App(){
   const cumplColor=calc.cumplPct>=91?"#16A34A":calc.cumplPct>=71?"#D97706":calc.cumplPct>=50?"#EA580C":"#DC2626";
   const cumplBg=calc.cumplPct>=91?"#F0FDF4":calc.cumplPct>=71?"#FFFBEB":calc.cumplPct>=50?"#FFF7ED":"#FEF2F2";
 
+  function RefTable({title,icon,rates,color}){
+    return(<div>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}><Icon name={icon} size={20} color={color}/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>{title}</span></div>
+      <div style={{borderRadius:10,border:"1px solid #E2E8F0",overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
+          <thead><tr>
+            <th style={{padding:"10px 6px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:"#fff",background:"#0F172A",textAlign:"left",paddingLeft:12,width:"14%"}}>Mercado</th>
+            <th style={{padding:"10px 4px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:"#fff",background:"#0F172A",textAlign:"center",width:"12%"}}>RIA Mín.</th>
+            {COL_LABELS.map((c,i)=><th key={c} style={{padding:"10px 2px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".05em",color:"#fff",background:calc.col===i?"#D97706":"#1E293B",textAlign:"center",transition:"background .3s"}}>{c}</th>)}
+          </tr></thead>
+          <tbody>{MARKETS.map((m,mi)=>(<tr key={m.key} style={{borderBottom:"1px solid #F1F5F9"}}>
+            <td style={{padding:"10px 6px 10px 12px",fontWeight:700,fontSize:13,color:"#0F172A"}}>{m.label}</td>
+            <td style={{padding:"10px 4px",textAlign:"center",color:"#64748B",fontFamily:"'JetBrains Mono',monospace",fontSize:12}}>S/{m.riaMin.toLocaleString()}</td>
+            {rates[mi].map((r,ci)=>(<td key={ci} style={{padding:"10px 2px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:12,fontWeight:600,color:"#334155",...(calc.col===ci?{background:"#FFFBEB",fontWeight:800,color:"#B45309"}:{})}}>{(r*100).toFixed(r===0?0:(r*100)%1===0?1:2)}%</td>))}
+          </tr>))}</tbody>
+        </table>
+      </div>
+    </div>);
+  }
+
+  return(<div className="fu">
+    {/* REF */}
+    <div className="card" style={{padding:"22px 24px",marginBottom:20}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+        <Icon name="menu_book" size={22} color="#0F172A"/><h2 style={{fontSize:16,fontWeight:800,color:"#0F172A",margin:0}}>Tabla de Comisiones — Referencia</h2>
+        <span style={{fontSize:11,fontWeight:600,color:"#94A3B8",marginLeft:"auto"}}>Esquema Elite</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+        <RefTable title="Comisión Flujo" icon="trending_up" rates={FLUJO_RATES} color="#D97706"/>
+        <RefTable title="Comisión Saldo (Mixta)" icon="savings" rates={SALDO_RATES} color="#2563EB"/>
+      </div>
+    </div>
+
+    {/* META */}
+    <div className="card" style={{padding:"22px 24px",marginBottom:20}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"end"}}>
+        <div>
+          <label style={{fontSize:11,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+            <Icon name="flag" size={15} color="#94A3B8"/> Objetivo / Meta del asesor</label>
+          <div style={{position:"relative"}}>
+            <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:15,fontWeight:700,color:"#94A3B8",fontFamily:"'JetBrains Mono',monospace"}}>S/</span>
+            <input type="number" value={meta} onChange={e=>setMeta(Math.max(0,Number(e.target.value)))}
+              style={{width:"100%",padding:"14px 14px 14px 48px",fontSize:28,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",border:"2px solid #E2E8F0",borderRadius:10,outline:"none",color:"#0F172A",background:"#F8FAFC",transition:"border-color .2s,box-shadow .2s"}}
+              onFocus={e=>{e.target.style.borderColor="#3B82F6";e.target.style.boxShadow="0 0 0 3px rgba(59,130,246,.1)"}}
+              onBlur={e=>{e.target.style.borderColor="#E2E8F0";e.target.style.boxShadow="none"}}/>
+          </div>
+        </div>
+        <div style={{background:cumplBg,borderRadius:10,padding:"16px 20px",border:`1px solid ${cumplColor}30`}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
+            <Icon name="speed" size={15} color="#64748B"/> % Cumplimiento</div>
+          <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:8}}>
+            <span style={{fontSize:32,fontWeight:900,color:cumplColor,fontFamily:"'JetBrains Mono',monospace",lineHeight:1}}>{calc.cumplPct.toFixed(1)}%</span>
+            <span style={{fontSize:12,fontWeight:700,color:cumplColor,background:`${cumplColor}18`,padding:"3px 10px",borderRadius:5}}>Columna {calc.bracket.label}</span>
+          </div>
+          <div style={{height:7,background:`${cumplColor}20`,borderRadius:4,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${Math.min(calc.cumplPct,130)/1.3}%`,background:`linear-gradient(90deg,${cumplColor},${cumplColor}CC)`,borderRadius:4,transition:"width .5s ease"}}/>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:10,fontWeight:600,color:"#94A3B8"}}>
+            <span>RIA Total: S/ {fmt(calc.totalRIA)}</span><span>Meta: S/ {fmt(meta)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* SIMULATION */}
+    <div className="card" style={{overflow:"hidden",marginBottom:20}}>
+      <div style={{padding:"18px 24px",borderBottom:"1px solid #F1F5F9",display:"flex",alignItems:"center",gap:10}}>
+        <Icon name="calculate" size={22} color="#0F172A"/><h2 style={{fontSize:16,fontWeight:800,color:"#0F172A",margin:0}}>Simulación de Comisiones</h2>
+        <span style={{fontSize:12,color:"#94A3B8",fontWeight:500,marginLeft:6}}>Ingrese la RIA por mercado</span>
+        <div style={{marginLeft:"auto"}}><button className="refresh-btn" onClick={clearAll}><Icon name="refresh" size={16} color="currentColor"/>Limpiar datos</button></div>
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+        <colgroup><col style={{width:"13%"}}/><col style={{width:"16%"}}/><col style={{width:"9%"}}/><col style={{width:"14%"}}/><col style={{width:"16%"}}/><col style={{width:"9%"}}/><col style={{width:"14%"}}/></colgroup>
+        <thead>
+          <tr>
+            <th rowSpan={2} style={{padding:"12px 14px",background:"#0F172A",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"left",borderRight:"2px solid #1E293B"}}>Mercado</th>
+            <th colSpan={3} style={{padding:"10px 12px",background:"#92400E",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"center",borderRight:"3px solid #0F172A"}}>
+              <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Icon name="trending_up" size={15} color="#FDE68A"/> Flujo</span></th>
+            <th colSpan={3} style={{padding:"10px 12px",background:"#1E3A5F",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"center"}}>
+              <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Icon name="savings" size={15} color="#93C5FD"/> Saldo</span></th>
+          </tr>
+          <tr style={{background:"#F8FAFC"}}>
+            {["RIA (S/)","Tasa","Comisión"].map((h,hi)=><th key={`f${hi}`} style={{padding:"8px 6px",fontSize:10,fontWeight:700,color:"#92400E",textTransform:"uppercase",letterSpacing:".06em",textAlign:"center",...(hi===2?{borderRight:"3px solid #E2E8F0"}:{})}}>{h}</th>)}
+            {["RIA (S/)","Tasa","Comisión"].map((h,hi)=><th key={`s${hi}`} style={{padding:"8px 6px",fontSize:10,fontWeight:700,color:"#1E3A5F",textTransform:"uppercase",letterSpacing:".06em",textAlign:"center"}}>{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {MARKETS.map((m,i)=>(<tr key={m.key} style={{borderBottom:"1px solid #F1F5F9"}}>
+            <td style={{padding:"10px 14px",fontWeight:700,fontSize:14,color:"#0F172A",background:"#F8FAFC",borderRight:"2px solid #F1F5F9"}}><div>{m.label}</div><div style={{fontSize:10,fontWeight:500,color:"#94A3B8"}}>RIA mín. S/{m.riaMin.toLocaleString()}</div></td>
+            <td style={{padding:"8px 8px"}}><input type="number" className="ria-input" placeholder="0" value={flujoRIA[m.key]} onChange={e=>updateFlujo(m.key,e.target.value)}/></td>
+            <td style={{padding:"8px 4px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:calc.fVals[i]>0?"#92400E":"#CBD5E1"}}>{calc.fVals[i]>0?fmtPct(calc.flujoRates[i]):"—"}</td>
+            <td style={{padding:"8px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:calc.flujoComms[i]>0?"#92400E":"#E2E8F0",borderRight:"3px solid #F1F5F9"}}>{calc.flujoComms[i]>0?`S/ ${fmt(calc.flujoComms[i])}`:"—"}</td>
+            <td style={{padding:"8px 8px"}}><input type="number" className="ria-input" placeholder="0" value={saldoRIA[m.key]} onChange={e=>updateSaldo(m.key,e.target.value)}/></td>
+            <td style={{padding:"8px 4px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:calc.sVals[i]>0?"#1E3A5F":"#CBD5E1"}}>{calc.sVals[i]>0?fmtPct(calc.saldoRates[i]):"—"}</td>
+            <td style={{padding:"8px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:calc.saldoComms[i]>0?"#1E3A5F":"#E2E8F0"}}>{calc.saldoComms[i]>0?`S/ ${fmt(calc.saldoComms[i])}`:"—"}</td>
+          </tr>))}
+        </tbody>
+        <tfoot>
+          <tr style={{background:"#F8FAFC",borderTop:"2px solid #E2E8F0"}}>
+            <td style={{padding:"12px 14px",fontWeight:800,fontSize:13,color:"#0F172A",borderRight:"2px solid #E2E8F0"}}><Icon name="functions" size={16} color="#64748B" style={{marginRight:4}}/> SUBTOTALES</td>
+            <td style={{padding:"12px 8px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:"#0F172A"}}>S/ {fmt(calc.totalFlujo)}</td><td/>
+            <td style={{padding:"12px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:"#92400E",borderRight:"3px solid #E2E8F0"}}>S/ {fmt(calc.totalFlujoComm)}</td>
+            <td style={{padding:"12px 8px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:"#0F172A"}}>S/ {fmt(calc.totalSaldo)}</td><td/>
+            <td style={{padding:"12px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:"#1E3A5F"}}>S/ {fmt(calc.totalSaldoComm)}</td>
+          </tr>
+          <tr style={{background:"#0F172A"}}>
+            <td colSpan={4} style={{padding:"14px 14px",borderRight:"3px solid #1E293B"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:13,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",gap:6}}><Icon name="account_balance_wallet" size={18} color="#FDE68A"/> RIA TOTAL</span>
+                <span style={{fontSize:20,fontWeight:900,color:"#FDE68A",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(calc.totalRIA)}</span>
+              </div></td>
+            <td colSpan={3} style={{padding:"14px 14px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:13,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",gap:6}}><Icon name="payments" size={18} color="#93C5FD"/> COMISIÓN TOTAL</span>
+                <span style={{fontSize:20,fontWeight:900,color:"#93C5FD",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(calc.subtotal)}</span>
+              </div></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    {/* BOTTOM */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+      <div style={{display:"flex",flexDirection:"column",gap:20}}>
+        <div className="card" style={{padding:"20px 22px",background:calc.bonusApplied?"#F0FDF4":"#fff",borderColor:calc.bonusApplied?"#BBF7D0":"#E2E8F0"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <Icon name="emoji_events" size={22} color={calc.bonusApplied?"#16A34A":"#CBD5E1"}/>
+            <span style={{fontSize:14,fontWeight:800,color:calc.bonusApplied?"#166534":"#94A3B8"}}>Bono por Flujo</span></div>
+          <div style={{fontSize:26,fontWeight:900,color:calc.bonusApplied?"#16A34A":"#CBD5E1",fontFamily:"'JetBrains Mono',monospace",marginBottom:8}}>
+            {calc.bonusApplied?`+ S/ ${fmt(BONUS_AMOUNT)}`:"No aplica"}</div>
+          <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}>
+            <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}>
+              <Icon name={calc.metaCumplida?"check_circle":"cancel"} size={14} color={calc.metaCumplida?"#16A34A":"#DC2626"}/> Meta completada ({calc.cumplPct.toFixed(1)}%)</div>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <Icon name={calc.totalFlujo>=BONUS_FLUJO_MIN?"check_circle":"cancel"} size={14} color={calc.totalFlujo>=BONUS_FLUJO_MIN?"#16A34A":"#DC2626"}/> 70% flujo acumulado ≥ S/ {BONUS_FLUJO_MIN.toLocaleString()} (S/ {fmt(calc.totalFlujo)})</div>
+          </div>
+        </div>
+        <div className="card" style={{padding:"20px 22px",flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}><Icon name="donut_large" size={20} color="#0F172A"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Distribución RIA</span></div>
+          <DonutChart slices={[{label:"Flujo",value:calc.totalFlujo,color:"#D97706"},{label:"Saldo",value:calc.totalSaldo,color:"#2563EB"}]}
+            centerTop={`S/ ${(calc.totalRIA/1000).toFixed(0)}K`} centerBottom="RIA TOTAL"/>
+        </div>
+      </div>
+      <div style={{background:"linear-gradient(135deg,#0F172A,#1E293B)",borderRadius:14,padding:"28px",color:"#fff",boxShadow:"0 4px 20px rgba(15,23,42,.2)",position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+        <div style={{position:"absolute",top:0,right:0,width:"50%",height:"100%",background:"linear-gradient(135deg,transparent 40%,rgba(59,130,246,.08) 40%)"}}/>
+        <div style={{position:"relative"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><Icon name="account_balance" size={26} color="#FDE68A"/><span style={{fontSize:16,fontWeight:800}}>Comisión Total del Asesor</span></div>
+          <div style={{fontSize:48,fontWeight:900,fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.02em",marginBottom:16,color:"#FDE68A",lineHeight:1}}>S/ {fmt(calc.grandTotal)}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10,fontSize:14,fontWeight:600}}>
+            {[{label:"Flujo",icon:"trending_up",ic:"#D97706",val:calc.totalFlujoComm,vc:"#FDE68A"},{label:"Saldo",icon:"savings",ic:"#93C5FD",val:calc.totalSaldoComm,vc:"#93C5FD"}].map(r=>
+              <div key={r.label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:"rgba(255,255,255,.06)",borderRadius:8}}>
+                <span style={{color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}><Icon name={r.icon} size={16} color={r.ic}/> {r.label}</span>
+                <span style={{color:r.vc,fontFamily:"'JetBrains Mono',monospace",fontWeight:800}}>S/ {fmt(r.val)}</span></div>)}
+            {calc.bonusApplied&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:"rgba(74,222,128,.1)",borderRadius:8}}>
+              <span style={{color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}><Icon name="emoji_events" size={16} color="#4ADE80"/> Bono</span>
+              <span style={{color:"#4ADE80",fontFamily:"'JetBrains Mono',monospace",fontWeight:800}}>S/ {fmt(BONUS_AMOUNT)}</span></div>}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{display:"flex",alignItems:"flex-start",gap:10,padding:"14px 20px",background:"#fff",borderRadius:10,border:"1px solid #E2E8F0"}}>
+      <Icon name="info" size={18} color="#94A3B8" style={{marginTop:2,flexShrink:0}}/>
+      <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}>
+        <strong style={{color:"#0F172A"}}>Nota:</strong> La comisión se calcula según el % de cumplimiento de la meta (RIA total / Meta). El bono de S/ 1,000 soles requiere cumplimiento del 70% flujo y meta completada. La comisión mensual para traspasos se paga a partir del devengue de la RIA. Herramienta de uso interno — AFP Integra.
+      </div>
+    </div>
+  </div>);
+}
+
+/* ═══════════════ APV CALCULATOR ═══════════════ */
+function APVCalc(){
+  const[clientType,setClientType]=useState("gestionado");
+  const[ventaType,setVentaType]=useState("nueva");
+  const[apvInputs,setApvInputs]=useState({F0:"",F1:"",F2:"",F3:""});
+  const[saldoPrev,setSaldoPrev]=useState("");
+  const[suscBruta,setSuscBruta]=useState("");
+  const[rescates,setRescates]=useState("");
+  const clearAll=()=>{setApvInputs({F0:"",F1:"",F2:"",F3:""});setSaldoPrev("");setSuscBruta("");setRescates("")};
+
+  const suscNeta=useMemo(()=>{
+    const sb=Number(suscBruta)||0;const sp=Number(saldoPrev)||0;const re=Number(rescates)||0;
+    const afectaSaldo=Math.min(re,sp);const afectaSusc=re-afectaSaldo;
+    return Math.max(0,sb-afectaSusc);
+  },[suscBruta,saldoPrev,rescates]);
+
+  const apvCalc=useMemo(()=>{
+    const vals=FUNDS.map(f=>Number(apvInputs[f])||0);
+    const rates=FUNDS.map((f,i)=>getAPVRate(f,clientType,ventaType,vals[i]));
+    const comms=vals.map((v,i)=>rates[i]!==null?v*rates[i]:0);
+    const totalSusc=vals.reduce((a,b)=>a+b,0);
+    const totalComm=comms.reduce((a,b)=>a+b,0);
+    return{vals,rates,comms,totalSusc,totalComm};
+  },[apvInputs,clientType,ventaType]);
+
+  const fundColors={F0:"#64748B",F1:"#D97706",F2:"#2563EB",F3:"#7C3AED"};
+
+  return(<div className="fu">
+    {/* REF TABLES */}
+    <div className="card" style={{padding:"22px 24px",marginBottom:20}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
+        <Icon name="menu_book" size={22} color="#0F172A"/><h2 style={{fontSize:16,fontWeight:800,color:"#0F172A",margin:0}}>Tabla de Comisiones APV — Suscripción Neta a 6 Meses</h2>
+        <span style={{fontSize:11,fontWeight:600,color:"#94A3B8",marginLeft:"auto"}}>Adenda 2026-0010</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+        {/* Gestionados */}
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <Icon name="person" size={20} color="#16A34A"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Clientes Gestionados</span></div>
+          <div style={{borderRadius:10,border:"1px solid #E2E8F0",overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
+              <thead>
+                <tr>
+                  <th rowSpan={2} style={{padding:"10px 8px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:"#fff",background:"#0F172A",textAlign:"left",paddingLeft:12,width:"18%"}}>Fondo</th>
+                  <th colSpan={2} style={{padding:"8px 4px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",color:"#fff",background:"#1E293B",textAlign:"center"}}>Venta 95.5%</th>
+                  <th colSpan={2} style={{padding:"8px 4px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",color:"#fff",background:"#0F172A",textAlign:"center"}}>Venta Nueva</th>
+                </tr>
+                <tr style={{background:"#F8FAFC"}}>
+                  <th style={{padding:"6px 4px",fontSize:9,fontWeight:600,color:"#64748B",textAlign:"center"}}>0-599K</th>
+                  <th style={{padding:"6px 4px",fontSize:9,fontWeight:600,color:"#64748B",textAlign:"center"}}>≥600K</th>
+                  <th style={{padding:"6px 4px",fontSize:9,fontWeight:600,color:"#64748B",textAlign:"center"}}>0-599K</th>
+                  <th style={{padding:"6px 4px",fontSize:9,fontWeight:600,color:"#64748B",textAlign:"center"}}>≥600K</th>
+                </tr>
+              </thead>
+              <tbody>{FUNDS.map(f=>{const r=APV_GESTIONADOS[f];return(
+                <tr key={f} style={{borderBottom:"1px solid #F1F5F9"}}>
+                  <td style={{padding:"9px 8px 9px 12px",fontWeight:700,fontSize:13,color:fundColors[f]}}>{f}</td>
+                  {r.map((v,i)=><td key={i} style={{padding:"9px 4px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:12,fontWeight:600,color:"#334155"}}>{(v*100).toFixed(2)}%</td>)}
+                </tr>)})}</tbody>
+            </table>
+          </div>
+        </div>
+        {/* Espontáneos */}
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <Icon name="directions_walk" size={20} color="#D97706"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Clientes Espontáneos</span>
+            <span style={{fontSize:10,fontWeight:600,color:"#94A3B8",background:"#F1F5F9",padding:"2px 8px",borderRadius:4}}>Solo Lima</span></div>
+          <div style={{borderRadius:10,border:"1px solid #E2E8F0",overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
+              <thead><tr>
+                <th style={{padding:"10px 8px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:"#fff",background:"#0F172A",textAlign:"left",paddingLeft:12,width:"30%"}}>Fondo</th>
+                <th style={{padding:"10px 4px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",color:"#fff",background:"#1E293B",textAlign:"center"}}>Venta 95.5%</th>
+                <th style={{padding:"10px 4px",fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".06em",color:"#fff",background:"#0F172A",textAlign:"center"}}>Venta Nueva</th>
+              </tr></thead>
+              <tbody>{FUNDS.map(f=>{const r=APV_ESPONTANEOS[f];return(
+                <tr key={f} style={{borderBottom:"1px solid #F1F5F9"}}>
+                  <td style={{padding:"9px 8px 9px 12px",fontWeight:700,fontSize:13,color:fundColors[f]}}>{f}</td>
+                  {r.map((v,i)=><td key={i} style={{padding:"9px 4px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:12,fontWeight:600,color:v===null?"#CBD5E1":"#334155"}}>{v===null?"—":`${(v*100).toFixed(2)}%`}</td>)}
+                </tr>)})}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* SETTINGS + SUSC NETA HELPER */}
+    <div className="card" style={{padding:"22px 24px",marginBottom:20}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,marginBottom:24}}>
+        <div>
+          <label style={{fontSize:11,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+            <Icon name="person" size={15} color="#94A3B8"/> Tipo de Cliente</label>
+          <div style={{display:"flex",background:"#F1F5F9",borderRadius:10,padding:3,border:"1px solid #E2E8F0"}}>
+            {[{k:"gestionado",l:"Gestionado",ic:"person"},{k:"espontaneo",l:"Espontáneo",ic:"directions_walk"}].map(t=>
+              <button key={t.k} onClick={()=>setClientType(t.k)} style={{flex:1,padding:"12px 12px",fontSize:14,fontWeight:700,border:"none",borderRadius:8,background:clientType===t.k?"#0F172A":"transparent",color:clientType===t.k?"#fff":"#64748B",cursor:"pointer",transition:"all .2s",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <Icon name={t.ic} size={16} color={clientType===t.k?"#fff":"#94A3B8"}/> {t.l}</button>)}
+          </div>
+        </div>
+        <div>
+          <label style={{fontSize:11,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+            <Icon name="sell" size={15} color="#94A3B8"/> Tipo de Venta</label>
+          <div style={{display:"flex",background:"#F1F5F9",borderRadius:10,padding:3,border:"1px solid #E2E8F0"}}>
+            {[{k:"955",l:"Venta 95.5%"},{k:"nueva",l:"Venta Nueva"}].map(t=>
+              <button key={t.k} onClick={()=>setVentaType(t.k)} style={{flex:1,padding:"12px 12px",fontSize:14,fontWeight:700,border:"none",borderRadius:8,background:ventaType===t.k?"#0F172A":"transparent",color:ventaType===t.k?"#fff":"#64748B",cursor:"pointer",transition:"all .2s"}}>
+                {t.l}</button>)}
+          </div>
+        </div>
+      </div>
+
+      {/* Suscripción Neta Helper */}
+      <div style={{background:"#F8FAFC",borderRadius:12,padding:"18px 22px",border:"1px solid #E2E8F0"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+          <Icon name="calculate" size={20} color="#0F172A"/>
+          <span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Calculadora de Suscripción Neta</span>
+          <span style={{fontSize:11,color:"#94A3B8",fontWeight:500,marginLeft:4}}>Herramienta auxiliar</span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 40px 1fr",gap:14,alignItems:"end"}}>
+          {[{l:"Suscripción Bruta",v:suscBruta,s:setSuscBruta,ic:"add_circle"},{l:"Saldo Previo (mes anterior)",v:saldoPrev,s:setSaldoPrev,ic:"account_balance"},{l:"Rescates (6 meses)",v:rescates,s:setRescates,ic:"remove_circle"}].map(inp=>
+            <div key={inp.l}>
+              <label style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:".08em",display:"flex",alignItems:"center",gap:4,marginBottom:6}}>
+                <Icon name={inp.ic} size={13} color="#94A3B8"/> {inp.l}</label>
+              <input type="number" className="ria-input" placeholder="0" value={inp.v} onChange={e=>inp.s(e.target.value)}/>
+            </div>)}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",paddingBottom:6}}>
+            <Icon name="arrow_forward" size={24} color="#94A3B8"/></div>
+          <div>
+            <label style={{fontSize:10,fontWeight:700,color:"#16A34A",textTransform:"uppercase",letterSpacing:".08em",display:"flex",alignItems:"center",gap:4,marginBottom:6}}>
+              <Icon name="check_circle" size={13} color="#16A34A"/> Suscripción Neta</label>
+            <div style={{padding:"10px 12px",fontSize:15,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",border:"2px solid #BBF7D0",borderRadius:8,color:"#166534",background:"#F0FDF4",textAlign:"right"}}>
+              S/ {fmt(suscNeta)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* APV SIMULATION TABLE */}
+    <div className="card" style={{overflow:"hidden",marginBottom:20}}>
+      <div style={{padding:"18px 24px",borderBottom:"1px solid #F1F5F9",display:"flex",alignItems:"center",gap:10}}>
+        <Icon name="grid_view" size={22} color="#0F172A"/><h2 style={{fontSize:16,fontWeight:800,color:"#0F172A",margin:0}}>Simulación Comisión APV</h2>
+        <span style={{fontSize:12,color:"#94A3B8",fontWeight:500,marginLeft:6}}>Ingrese la suscripción neta por fondo</span>
+        <div style={{marginLeft:"auto"}}><button className="refresh-btn" onClick={clearAll}><Icon name="refresh" size={16} color="currentColor"/>Limpiar datos</button></div>
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+        <colgroup><col style={{width:"16%"}}/><col style={{width:"28%"}}/><col style={{width:"14%"}}/><col style={{width:"14%"}}/><col style={{width:"28%"}}/></colgroup>
+        <thead><tr>
+          <th style={{padding:"12px 14px",background:"#0F172A",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".1em",textAlign:"left"}}>Fondo</th>
+          <th style={{padding:"12px 14px",background:"#1E293B",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",textAlign:"center"}}>Susc. Neta (S/)</th>
+          <th style={{padding:"12px 8px",background:"#1E293B",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",textAlign:"center"}}>Rango</th>
+          <th style={{padding:"12px 8px",background:"#1E293B",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",textAlign:"center"}}>Tasa</th>
+          <th style={{padding:"12px 14px",background:"#0F172A",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",textAlign:"center"}}>Comisión</th>
+        </tr></thead>
+        <tbody>
+          {FUNDS.map((f,i)=>{
+            const rate=apvCalc.rates[i];const isNA=rate===null;const val=apvCalc.vals[i];
+            const bracket=clientType==="gestionado"?(val>=600000?"≥600K":"0-599K"):"—";
+            return(<tr key={f} style={{borderBottom:"1px solid #F1F5F9",opacity:isNA?.5:1}}>
+              <td style={{padding:"12px 14px",fontWeight:800,fontSize:16,color:fundColors[f],background:"#F8FAFC"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{width:10,height:10,borderRadius:3,background:fundColors[f]}}/>{f}
+                </div></td>
+              <td style={{padding:"8px 10px"}}>{isNA?<div style={{textAlign:"center",color:"#CBD5E1",fontSize:13,fontWeight:600}}>No aplica</div>:
+                <input type="number" className="ria-input" placeholder="0" value={apvInputs[f]} onChange={e=>setApvInputs(p=>({...p,[f]:e.target.value}))}/>}</td>
+              <td style={{padding:"8px 6px",textAlign:"center",fontSize:12,fontWeight:600,color:val>0?"#64748B":"#CBD5E1",fontFamily:"'JetBrains Mono',monospace"}}>
+                {isNA?"—":val>0?bracket:"—"}</td>
+              <td style={{padding:"8px 6px",textAlign:"center",fontSize:14,fontWeight:700,color:val>0&&!isNA?fundColors[f]:"#CBD5E1",fontFamily:"'JetBrains Mono',monospace"}}>
+                {isNA||val<=0?"—":fmtPct(rate)}</td>
+              <td style={{padding:"8px 14px",textAlign:"right",fontSize:16,fontWeight:800,color:apvCalc.comms[i]>0?fundColors[f]:"#E2E8F0",fontFamily:"'JetBrains Mono',monospace"}}>
+                {apvCalc.comms[i]>0?`S/ ${fmt(apvCalc.comms[i])}`:"—"}</td>
+            </tr>);
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{background:"#0F172A"}}>
+            <td colSpan={2} style={{padding:"14px 14px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:13,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",gap:6}}><Icon name="account_balance_wallet" size={18} color="#FDE68A"/> SUSCRIPCIÓN TOTAL</span>
+                <span style={{fontSize:20,fontWeight:900,color:"#FDE68A",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(apvCalc.totalSusc)}</span>
+              </div></td>
+            <td colSpan={3} style={{padding:"14px 14px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:13,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",gap:6}}><Icon name="payments" size={18} color="#93C5FD"/> COMISIÓN TOTAL APV</span>
+                <span style={{fontSize:20,fontWeight:900,color:"#93C5FD",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(apvCalc.totalComm)}</span>
+              </div></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    {/* RESULT CARDS */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+      <div className="card" style={{padding:"20px 22px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}><Icon name="donut_large" size={20} color="#0F172A"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Distribución por Fondo</span></div>
+        <DonutChart slices={FUNDS.filter(f=>apvCalc.vals[FUNDS.indexOf(f)]>0).map(f=>({label:f,value:apvCalc.vals[FUNDS.indexOf(f)],color:fundColors[f]}))}
+          centerTop={apvCalc.totalSusc>0?`S/ ${(apvCalc.totalSusc/1000).toFixed(0)}K`:"S/ 0"} centerBottom="SUSC. TOTAL"/>
+      </div>
+      <div style={{background:"linear-gradient(135deg,#0F172A,#1E293B)",borderRadius:14,padding:"28px",color:"#fff",boxShadow:"0 4px 20px rgba(15,23,42,.2)",position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+        <div style={{position:"absolute",top:0,right:0,width:"50%",height:"100%",background:"linear-gradient(135deg,transparent 40%,rgba(59,130,246,.08) 40%)"}}/>
+        <div style={{position:"relative"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}><Icon name="account_balance" size={26} color="#FDE68A"/><span style={{fontSize:16,fontWeight:800}}>Comisión Total APV</span></div>
+          <div style={{fontSize:48,fontWeight:900,fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.02em",marginBottom:16,color:"#FDE68A",lineHeight:1}}>S/ {fmt(apvCalc.totalComm)}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,fontSize:13,fontWeight:600}}>
+            {FUNDS.map((f,i)=>apvCalc.comms[i]>0?
+              <div key={f} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"rgba(255,255,255,.06)",borderRadius:8}}>
+                <span style={{color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{width:8,height:8,borderRadius:2,background:fundColors[f]}}/> {f}</span>
+                <span style={{color:"#FDE68A",fontFamily:"'JetBrains Mono',monospace",fontWeight:800}}>S/ {fmt(apvCalc.comms[i])}</span></div>:null)}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style={{display:"flex",alignItems:"flex-start",gap:10,padding:"14px 20px",background:"#fff",borderRadius:10,border:"1px solid #E2E8F0"}}>
+      <Icon name="info" size={18} color="#94A3B8" style={{marginTop:2,flexShrink:0}}/>
+      <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}>
+        <strong style={{color:"#0F172A"}}>Nota:</strong> La comisión APV se paga al 6to mes de realizada la suscripción, considerando el monto neto que permanezca. Los rescates afectan primero al saldo previo y luego a la suscripción. Vigencia: 01/02/2026. Adenda 2026-0010 — AFP Integra.
+      </div>
+    </div>
+  </div>);
+}
+
+/* ═══════════════ MAIN APP ═══════════════ */
+function App(){
+  const[tab,setTab]=useState("traspasos");
   return(
     <div style={{minHeight:"100vh"}}>
       <header style={{background:"#0F172A",color:"#fff",position:"relative",overflow:"hidden"}}>
-        <div style={{position:"absolute",top:0,right:0,width:"50%",height:"100%",background:"linear-gradient(135deg,transparent 40%,rgba(59,130,246,0.06) 40%)"}}/>
-        <div style={{position:"relative",maxWidth:1080,margin:"0 auto",padding:"24px 28px 20px"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:14}}>
+        <div style={{position:"absolute",top:0,right:0,width:"50%",height:"100%",background:"linear-gradient(135deg,transparent 40%,rgba(59,130,246,.06) 40%)"}}/>
+        <div style={{position:"relative",maxWidth:1080,margin:"0 auto",padding:"24px 28px 0"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:14,paddingBottom:20}}>
             <div style={{display:"flex",alignItems:"center",gap:14}}>
               <div style={{width:44,height:44,background:"linear-gradient(135deg,#3B82F6,#1D4ED8)",borderRadius:11,display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name="analytics" size={24} color="#fff"/></div>
               <div>
@@ -174,182 +560,21 @@ function App(){
                 <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.02em"}}>Calculadora de Comisiones</div>
               </div>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 16px",background:"rgba(255,255,255,0.06)",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,padding:"7px 16px",background:"rgba(255,255,255,.06)",borderRadius:8,border:"1px solid rgba(255,255,255,.08)"}}>
               <Icon name="support_agent" size={17} color="#3B82F6"/><span style={{fontSize:12,fontWeight:600,color:"#94A3B8"}}>Portal del Asesor</span>
             </div>
           </div>
+          {/* TABS */}
+          <div style={{display:"flex",gap:4}}>
+            <button className={`tab-btn ${tab==="traspasos"?"active":""}`} onClick={()=>setTab("traspasos")}>
+              <Icon name="swap_horiz" size={18} color={tab==="traspasos"?"#0F172A":"#64748B"}/> Traspasos</button>
+            <button className={`tab-btn ${tab==="apv"?"active":""}`} onClick={()=>setTab("apv")}>
+              <Icon name="savings" size={18} color={tab==="apv"?"#0F172A":"#64748B"}/> APV</button>
+          </div>
         </div>
       </header>
-
       <main style={{maxWidth:1080,margin:"0 auto",padding:"24px 16px 48px"}}>
-        <div className="fu" style={{background:"#fff",borderRadius:14,border:"1px solid #E2E8F0",padding:"22px 24px",marginBottom:20,boxShadow:"0 1px 3px rgba(15,23,42,0.04)"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18}}>
-            <Icon name="menu_book" size={22} color="#0F172A"/><h2 style={{fontSize:16,fontWeight:800,color:"#0F172A",margin:0}}>Tabla de Comisiones — Referencia</h2>
-            <span style={{fontSize:11,fontWeight:600,color:"#94A3B8",marginLeft:"auto"}}>Esquema Elite</span>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
-            <RefTable title="Comisión Flujo" icon="trending_up" rates={FLUJO_RATES} color="#D97706" activeCol={calc.col}/>
-            <RefTable title="Comisión Saldo (Mixta)" icon="savings" rates={SALDO_RATES} color="#2563EB" activeCol={calc.col}/>
-          </div>
-        </div>
-
-        <div className="fu2" style={{background:"#fff",borderRadius:14,border:"1px solid #E2E8F0",padding:"22px 24px",marginBottom:20,boxShadow:"0 1px 3px rgba(15,23,42,0.04)"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24,alignItems:"end"}}>
-            <div>
-              <label style={{fontSize:11,fontWeight:700,color:"#94A3B8",textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
-                <Icon name="flag" size={15} color="#94A3B8"/> Objetivo / Meta del asesor
-              </label>
-              <div style={{position:"relative"}}>
-                <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:15,fontWeight:700,color:"#94A3B8",fontFamily:"'JetBrains Mono',monospace"}}>S/</span>
-                <input type="number" value={meta} onChange={e=>setMeta(Math.max(0,Number(e.target.value)))}
-                  style={{width:"100%",padding:"14px 14px 14px 48px",fontSize:28,fontWeight:800,fontFamily:"'JetBrains Mono',monospace",border:"2px solid #E2E8F0",borderRadius:10,outline:"none",color:"#0F172A",background:"#F8FAFC",transition:"border-color .2s,box-shadow .2s"}}
-                  onFocus={e=>{e.target.style.borderColor="#3B82F6";e.target.style.boxShadow="0 0 0 3px rgba(59,130,246,.1)"}}
-                  onBlur={e=>{e.target.style.borderColor="#E2E8F0";e.target.style.boxShadow="none"}}/>
-              </div>
-            </div>
-            <div style={{background:cumplBg,borderRadius:10,padding:"16px 20px",border:`1px solid ${cumplColor}30`}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6,display:"flex",alignItems:"center",gap:5}}>
-                <Icon name="speed" size={15} color="#64748B"/> % Cumplimiento
-              </div>
-              <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:8}}>
-                <span style={{fontSize:32,fontWeight:900,color:cumplColor,fontFamily:"'JetBrains Mono',monospace",lineHeight:1}}>{calc.cumplPct.toFixed(1)}%</span>
-                <span style={{fontSize:12,fontWeight:700,color:cumplColor,background:`${cumplColor}18`,padding:"3px 10px",borderRadius:5}}>Columna {calc.bracket.label}</span>
-              </div>
-              <div style={{height:7,background:`${cumplColor}20`,borderRadius:4,overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${Math.min(calc.cumplPct,130)/1.3}%`,background:`linear-gradient(90deg,${cumplColor},${cumplColor}CC)`,borderRadius:4,transition:"width .5s ease"}}/>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:10,fontWeight:600,color:"#94A3B8"}}>
-                <span>RIA Total: S/ {fmt(calc.totalRIA)}</span><span>Meta: S/ {fmt(meta)}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="fu3" style={{background:"#fff",borderRadius:14,border:"1px solid #E2E8F0",overflow:"hidden",marginBottom:20,boxShadow:"0 1px 3px rgba(15,23,42,0.04)"}}>
-          <div style={{padding:"18px 24px",borderBottom:"1px solid #F1F5F9",display:"flex",alignItems:"center",gap:10}}>
-            <Icon name="calculate" size={22} color="#0F172A"/><h2 style={{fontSize:16,fontWeight:800,color:"#0F172A",margin:0}}>Simulación de Comisiones</h2>
-            <span style={{fontSize:12,color:"#94A3B8",fontWeight:500,marginLeft:6}}>Ingrese la RIA por mercado</span>
-          </div>
-          <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
-            <colgroup><col style={{width:"13%"}}/><col style={{width:"16%"}}/><col style={{width:"9%"}}/><col style={{width:"14%"}}/><col style={{width:"16%"}}/><col style={{width:"9%"}}/><col style={{width:"14%"}}/></colgroup>
-            <thead>
-              <tr>
-                <th rowSpan={2} style={{padding:"12px 14px",background:"#0F172A",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"left",borderRight:"2px solid #1E293B"}}>Mercado</th>
-                <th colSpan={3} style={{padding:"10px 12px",background:"#92400E",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"center",borderRight:"3px solid #0F172A"}}>
-                  <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Icon name="trending_up" size={15} color="#FDE68A"/> Flujo</span>
-                </th>
-                <th colSpan={3} style={{padding:"10px 12px",background:"#1E3A5F",color:"#fff",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",textAlign:"center"}}>
-                  <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Icon name="savings" size={15} color="#93C5FD"/> Saldo</span>
-                </th>
-              </tr>
-              <tr style={{background:"#F8FAFC"}}>
-                {["RIA (S/)","Tasa","Comisión"].map((h,hi)=><th key={`f${hi}`} style={{padding:"8px 6px",fontSize:10,fontWeight:700,color:"#92400E",textTransform:"uppercase",letterSpacing:".06em",textAlign:"center",...(hi===2?{borderRight:"3px solid #E2E8F0"}:{})}}>{h}</th>)}
-                {["RIA (S/)","Tasa","Comisión"].map((h,hi)=><th key={`s${hi}`} style={{padding:"8px 6px",fontSize:10,fontWeight:700,color:"#1E3A5F",textTransform:"uppercase",letterSpacing:".06em",textAlign:"center"}}>{h}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {MARKETS.map((m,i)=>(
-                <tr key={m.key} style={{borderBottom:"1px solid #F1F5F9"}}>
-                  <td style={{padding:"10px 14px",fontWeight:700,fontSize:14,color:"#0F172A",background:"#F8FAFC",borderRight:"2px solid #F1F5F9"}}>
-                    <div>{m.label}</div><div style={{fontSize:10,fontWeight:500,color:"#94A3B8"}}>RIA mín. S/ {m.riaMin.toLocaleString()}</div>
-                  </td>
-                  <td style={{padding:"8px 8px"}}><input type="number" className="ria-input" placeholder="0" value={flujoRIA[m.key]} onChange={e=>updateFlujo(m.key,e.target.value)}/></td>
-                  <td style={{padding:"8px 4px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:calc.fVals[i]>0?"#92400E":"#CBD5E1"}}>{calc.fVals[i]>0?fmtPct(calc.flujoRates[i]):"—"}</td>
-                  <td style={{padding:"8px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:calc.flujoComms[i]>0?"#92400E":"#E2E8F0",borderRight:"3px solid #F1F5F9"}}>{calc.flujoComms[i]>0?`S/ ${fmt(calc.flujoComms[i])}`:"—"}</td>
-                  <td style={{padding:"8px 8px"}}><input type="number" className="ria-input" placeholder="0" value={saldoRIA[m.key]} onChange={e=>updateSaldo(m.key,e.target.value)}/></td>
-                  <td style={{padding:"8px 4px",textAlign:"center",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:calc.sVals[i]>0?"#1E3A5F":"#CBD5E1"}}>{calc.sVals[i]>0?fmtPct(calc.saldoRates[i]):"—"}</td>
-                  <td style={{padding:"8px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:calc.saldoComms[i]>0?"#1E3A5F":"#E2E8F0"}}>{calc.saldoComms[i]>0?`S/ ${fmt(calc.saldoComms[i])}`:"—"}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr style={{background:"#F8FAFC",borderTop:"2px solid #E2E8F0"}}>
-                <td style={{padding:"12px 14px",fontWeight:800,fontSize:13,color:"#0F172A",borderRight:"2px solid #E2E8F0"}}><Icon name="functions" size={16} color="#64748B" style={{marginRight:4}}/> SUBTOTALES</td>
-                <td style={{padding:"12px 8px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:"#0F172A"}}>S/ {fmt(calc.totalFlujo)}</td><td/>
-                <td style={{padding:"12px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:"#92400E",borderRight:"3px solid #E2E8F0"}}>S/ {fmt(calc.totalFlujoComm)}</td>
-                <td style={{padding:"12px 8px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:13,fontWeight:700,color:"#0F172A"}}>S/ {fmt(calc.totalSaldo)}</td><td/>
-                <td style={{padding:"12px 10px",textAlign:"right",fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:800,color:"#1E3A5F"}}>S/ {fmt(calc.totalSaldoComm)}</td>
-              </tr>
-              <tr style={{background:"#0F172A"}}>
-                <td colSpan={4} style={{padding:"14px 14px",borderRight:"3px solid #1E293B"}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <span style={{fontSize:13,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",gap:6}}><Icon name="account_balance_wallet" size={18} color="#FDE68A"/> RIA TOTAL</span>
-                    <span style={{fontSize:20,fontWeight:900,color:"#FDE68A",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(calc.totalRIA)}</span>
-                  </div>
-                </td>
-                <td colSpan={3} style={{padding:"14px 14px"}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <span style={{fontSize:13,fontWeight:800,color:"#fff",display:"flex",alignItems:"center",gap:6}}><Icon name="payments" size={18} color="#93C5FD"/> COMISIÓN TOTAL</span>
-                    <span style={{fontSize:20,fontWeight:900,color:"#93C5FD",fontFamily:"'JetBrains Mono',monospace"}}>S/ {fmt(calc.subtotal)}</span>
-                  </div>
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
-          <div style={{display:"flex",flexDirection:"column",gap:20}}>
-            <div style={{background:calc.bonusApplied?"#F0FDF4":"#fff",borderRadius:14,border:`1px solid ${calc.bonusApplied?"#BBF7D0":"#E2E8F0"}`,padding:"20px 22px",boxShadow:"0 1px 3px rgba(15,23,42,0.04)"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                <Icon name="emoji_events" size={22} color={calc.bonusApplied?"#16A34A":"#CBD5E1"}/>
-                <span style={{fontSize:14,fontWeight:800,color:calc.bonusApplied?"#166534":"#94A3B8"}}>Bono por Flujo</span>
-              </div>
-              <div style={{fontSize:26,fontWeight:900,color:calc.bonusApplied?"#16A34A":"#CBD5E1",fontFamily:"'JetBrains Mono',monospace",marginBottom:8}}>
-                {calc.bonusApplied?`+ S/ ${fmt(BONUS_AMOUNT)}`:"No aplica"}
-              </div>
-              <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}>
-                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}>
-                  <Icon name={calc.metaCumplida?"check_circle":"cancel"} size={14} color={calc.metaCumplida?"#16A34A":"#DC2626"}/>
-                  Meta completada ({calc.cumplPct.toFixed(1)}%)
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:5}}>
-                  <Icon name={calc.totalFlujo>=BONUS_FLUJO_MIN?"check_circle":"cancel"} size={14} color={calc.totalFlujo>=BONUS_FLUJO_MIN?"#16A34A":"#DC2626"}/>
-                  70% flujo acumulado ≥ S/ {BONUS_FLUJO_MIN.toLocaleString()} (S/ {fmt(calc.totalFlujo)})
-                </div>
-              </div>
-            </div>
-            <div style={{background:"#fff",borderRadius:14,border:"1px solid #E2E8F0",padding:"20px 22px",boxShadow:"0 1px 3px rgba(15,23,42,0.04)",flex:1}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
-                <Icon name="donut_large" size={20} color="#0F172A"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Distribución RIA</span>
-              </div>
-              <DonutChart flujoTotal={calc.totalFlujo} saldoTotal={calc.totalSaldo}/>
-            </div>
-          </div>
-          <div style={{background:"linear-gradient(135deg,#0F172A 0%,#1E293B 100%)",borderRadius:14,padding:"28px 28px",color:"#fff",boxShadow:"0 4px 20px rgba(15,23,42,0.2)",position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-            <div style={{position:"absolute",top:0,right:0,width:"50%",height:"100%",background:"linear-gradient(135deg,transparent 40%,rgba(59,130,246,0.08) 40%)"}}/>
-            <div style={{position:"relative"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                <Icon name="account_balance" size={26} color="#FDE68A"/><span style={{fontSize:16,fontWeight:800}}>Comisión Total del Asesor</span>
-              </div>
-              <div style={{fontSize:48,fontWeight:900,fontFamily:"'JetBrains Mono',monospace",letterSpacing:"-0.02em",marginBottom:16,color:"#FDE68A",lineHeight:1}}>S/ {fmt(calc.grandTotal)}</div>
-              <div style={{display:"flex",flexDirection:"column",gap:10,fontSize:14,fontWeight:600}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:"rgba(255,255,255,0.06)",borderRadius:8}}>
-                  <span style={{color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}><Icon name="trending_up" size={16} color="#D97706"/> Flujo</span>
-                  <span style={{color:"#FDE68A",fontFamily:"'JetBrains Mono',monospace",fontWeight:800}}>S/ {fmt(calc.totalFlujoComm)}</span>
-                </div>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:"rgba(255,255,255,0.06)",borderRadius:8}}>
-                  <span style={{color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}><Icon name="savings" size={16} color="#93C5FD"/> Saldo</span>
-                  <span style={{color:"#93C5FD",fontFamily:"'JetBrains Mono',monospace",fontWeight:800}}>S/ {fmt(calc.totalSaldoComm)}</span>
-                </div>
-                {calc.bonusApplied&&(
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:"rgba(74,222,128,0.1)",borderRadius:8}}>
-                    <span style={{color:"#94A3B8",display:"flex",alignItems:"center",gap:6}}><Icon name="emoji_events" size={16} color="#4ADE80"/> Bono</span>
-                    <span style={{color:"#4ADE80",fontFamily:"'JetBrains Mono',monospace",fontWeight:800}}>S/ {fmt(BONUS_AMOUNT)}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* FOOTER */}
-        <div style={{display:"flex",alignItems:"flex-start",gap:10,padding:"14px 20px",background:"#fff",borderRadius:10,border:"1px solid #E2E8F0"}}>
-          <Icon name="info" size={18} color="#94A3B8" style={{marginTop:2,flexShrink:0}}/>
-          <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}>
-            <strong style={{color:"#0F172A"}}>Nota:</strong> La comisión se calcula según el % de cumplimiento de la meta (RIA total / Meta). El bono de S/ 1,000 soles requiere cumplimiento del 70% flujo y meta completada. La comisión mensual para traspasos se paga a partir del devengue de la RIA. Herramienta de uso interno — AFP Integra.
-          </div>
-        </div>
+        {tab==="traspasos"?<TraspasosCalc/>:<APVCalc/>}
       </main>
     </div>
   );
