@@ -79,14 +79,14 @@ const FC={F0:"#64748B",F1:"#D97706",F2:"#2563EB",F3:"#7C3AED"};
 const APV_G={F0:[.0018,.0018,.0018,.0018],F1:[.005,.006,.005,.006],F2:[.008,.01,.0095,.011],F3:[.008,.01,.0095,.011]};
 const APV_E={F0:[.0018,.0018],F1:[.005,.006],F2:[.005,.006],F3:[.005,.006]};
 
-function apvRate(fund,ct,vt,amt){
+function apvRate(fund,ct,vt,isHighTier){
   if(ct==="espontaneo"){const r=APV_E[fund];return vt==="955"?r[0]:r[1]}
-  const r=APV_G[fund];const hi=amt>=600000;
-  return vt==="955"?(hi?r[1]:r[0]):(hi?r[3]:r[2]);
+  const r=APV_G[fund];
+  return vt==="955"?(isHighTier?r[1]:r[0]):(isHighTier?r[3]:r[2]);
 }
-function apvRangoLabel(ct,amt){
+function apvRangoLabel(ct,isHighTier){
   if(ct==="espontaneo")return"Único";
-  return amt>=600000?"≥ 600K":"0 – 599K";
+  return isHighTier?"≥ 600K":"0 – 599K";
 }
 
 /* ═══════════════ DONUT ═══════════════ */
@@ -267,7 +267,7 @@ function APVCalc(){
 
   const suscNeta=useMemo(()=>{
     const sb=Number(suscB)||0;const sp=Number(salP)||0;const re=Number(resc)||0;
-    return Math.max(0,sb-Math.max(0,re-sp));
+    return Math.max(0,(sb+sp)-re);
   },[suscB,salP,resc]);
 
   const addEntry=()=>setEntries(p=>[...p,{id:_apvId++,fund:"F2",ct:"gestionado",vt:"nueva",amt:""}]);
@@ -275,11 +275,19 @@ function APVCalc(){
   const updEntry=(id,k,v)=>setEntries(p=>p.map(e=>e.id===id?{...e,[k]:v}:e));
   const clearAll=()=>{setEntries([]);setSB("");setSP("");setRE("")};
 
-  const rows=useMemo(()=>entries.map(e=>{
-    const a=Number(e.amt)||0;const rate=apvRate(e.fund,e.ct,e.vt,a);const comm=a*rate;
-    const rango=a>0?apvRangoLabel(e.ct,a):"—";
-    return{...e,a,rate,comm,rango};
-  }),[entries]);
+  const rows=useMemo(()=>{
+    // First pass: calculate total to determine if >= 600K tier
+    const totalAll=entries.reduce((s,e)=>s+(Number(e.amt)||0),0);
+    const isHighTier=totalAll>=600000;
+    // Second pass: apply rates using global tier
+    return entries.map(e=>{
+      const a=Number(e.amt)||0;
+      const rate=apvRate(e.fund,e.ct,e.vt,isHighTier);
+      const comm=a*rate;
+      const rango=a>0?apvRangoLabel(e.ct,isHighTier):"—";
+      return{...e,a,rate,comm,rango,isHighTier};
+    });
+  },[entries]);
 
   const totSusc=rows.reduce((s,r)=>s+r.a,0);
   const totComm=rows.reduce((s,r)=>s+r.comm,0);
@@ -321,8 +329,9 @@ function APVCalc(){
 
     {/* SUSC NETA HELPER */}
     <div className="card" style={{padding:"22px 24px",marginBottom:20,background:"#FAFBFD"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><Icon name="build" size={20} color="#64748B"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Herramienta: Calcular Suscripción Neta</span></div>
-      <p style={{fontSize:12,color:"#94A3B8",marginBottom:14,lineHeight:1.5}}>Rescates afectan primero al saldo previo, el excedente reduce la suscripción. Usa el resultado para ingresar en la simulación.</p>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><Icon name="build" size={20} color="#64748B"/><span style={{fontSize:14,fontWeight:800,color:"#0F172A"}}>Herramienta: Calcular Suscripción Neta</span>
+        <div style={{marginLeft:"auto"}}><button className="refresh-btn" onClick={()=>{setSB("");setSP("");setRE("")}}><Icon name="refresh" size={16} color="currentColor"/>Limpiar</button></div></div>
+      <p style={{fontSize:12,color:"#94A3B8",marginBottom:14,lineHeight:1.5}}>(Suscripción Bruta + Saldo Previo) − Rescates = Suscripción Neta. Usa el resultado para ingresar en la simulación.</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 40px 1fr",gap:14,alignItems:"end"}}>
         {[{l:"Suscripción Bruta",v:suscB,s:setSB,ic:"add_circle",c:"#2563EB"},{l:"Saldo Previo (mes anterior)",v:salP,s:setSP,ic:"account_balance",c:"#64748B"},{l:"Rescates (6 meses)",v:resc,s:setRE,ic:"remove_circle",c:"#DC2626"}].map(inp=>
           <div key={inp.l}><label style={{fontSize:10,fontWeight:700,color:"#64748B",textTransform:"uppercase",letterSpacing:".08em",display:"flex",alignItems:"center",gap:4,marginBottom:6}}><Icon name={inp.ic} size={13} color={inp.c}/> {inp.l}</label>
@@ -343,6 +352,14 @@ function APVCalc(){
           {entries.length>0&&<button className="refresh-btn" onClick={clearAll}><Icon name="refresh" size={16} color="currentColor"/>Limpiar todo</button>}
         </div>
       </div>
+
+      {totSusc>=600000&&entries.length>0&&(
+        <div style={{padding:"10px 24px",background:"linear-gradient(90deg,#EFF6FF,#DBEAFE)",borderBottom:"1px solid #93C5FD",display:"flex",alignItems:"center",gap:8}}>
+          <Icon name="trending_up" size={18} color="#1D4ED8"/>
+          <span style={{fontSize:13,fontWeight:700,color:"#1D4ED8"}}>Suscripción total ≥ S/ 600,000</span>
+          <span style={{fontSize:12,fontWeight:600,color:"#3B82F6"}}>— Todas las operaciones aplican tasa del rango ≥ 600K</span>
+        </div>
+      )}
 
       {entries.length===0?(
         <div style={{padding:"40px 24px",textAlign:"center"}}>
@@ -383,7 +400,7 @@ function APVCalc(){
                       <option value="955">Venta 95.5%</option><option value="nueva">Venta Nueva</option></select></td>
                   <td style={{padding:"8px 8px"}}><input type="number" className="ria-input" placeholder="0" value={r.amt} onChange={e=>updEntry(r.id,"amt",e.target.value)}/></td>
                   <td style={{padding:"8px 6px",textAlign:"center"}}>
-                    {hasVal?<span className="badge" style={{background:r.ct==="gestionado"?(r.a>=600000?"#DBEAFE":"#F1F5F9"):"#FEF3C7",color:r.ct==="gestionado"?(r.a>=600000?"#1D4ED8":"#475569"):"#92400E",fontSize:11,fontWeight:700}}>{r.rango}</span>
+                    {hasVal?<span className="badge" style={{background:r.ct==="gestionado"?(r.isHighTier?"#DBEAFE":"#F1F5F9"):"#FEF3C7",color:r.ct==="gestionado"?(r.isHighTier?"#1D4ED8":"#475569"):"#92400E",fontSize:11,fontWeight:700}}>{r.rango}</span>
                     :<span style={{color:"#CBD5E1",fontSize:12}}>—</span>}
                   </td>
                   <td style={{padding:"8px 6px",textAlign:"center",fontSize:14,fontWeight:800,color:hasVal?FC[r.fund]:"#CBD5E1",fontFamily:"'JetBrains Mono',monospace"}}>
@@ -443,7 +460,7 @@ function APVCalc(){
 
     <div style={{display:"flex",alignItems:"flex-start",gap:10,padding:"14px 20px",background:"#fff",borderRadius:10,border:"1px solid #E2E8F0"}}>
       <Icon name="info" size={18} color="#94A3B8" style={{marginTop:2,flexShrink:0}}/>
-      <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}><strong style={{color:"#0F172A"}}>Nota:</strong> La comisión APV se paga al 6to mes de realizada la suscripción, considerando el monto neto que permanezca. Los rescates afectan primero al saldo previo y luego a la suscripción. Cada operación puede ser de diferente fondo, tipo de cliente y tipo de venta. Vigencia: 01/02/2026. Adenda 2026-0010 — AFP Integra.</div>
+      <div style={{fontSize:12,color:"#64748B",lineHeight:1.7}}><strong style={{color:"#0F172A"}}>Nota:</strong> La comisión APV se paga al 6to mes de realizada la suscripción, considerando el monto neto que permanezca. Si la suscripción total acumulada ≥ S/ 600,000, todas las operaciones aplican la tasa del rango ≥ 600K. Cada operación puede ser de diferente fondo, tipo de cliente y tipo de venta. Vigencia: 01/02/2026. Adenda 2026-0010 — AFP Integra.</div>
     </div>
   </div>);
 }
